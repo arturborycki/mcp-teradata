@@ -1,0 +1,22 @@
+[project]
+name = "teradata-mcp"
+version = "0.1.0"
+description = "Teradata MCP Server"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "mcp[cli]>=1.6.0",
+    "pydantic>=2.11.3",
+    "teradatasql>=20.0.0.28",
+]
+
+[[project.authors]]
+name = "Artur Borycki"
+email = "artur.borycki@gmail.com"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project.scripts]
+teradata-mcp = "teradata_mcp:main"
