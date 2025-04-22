@@ -209,6 +209,48 @@ async def main():
         )
     logger.info("Registering handlers")
 
+    @server.list_prompts()
+    async def handle_list_prompts() -> list[types.Prompt]:
+        logger.debug("Handling list_prompts request")
+        return [
+            types.Prompt(
+                name="mcp-teradata",
+                description="A prompt demonstrate what you can do with an Teradata MCP Server",
+                arguments=[
+                    types.PromptArgument(
+                        name="topic",
+                        description="Topic to seed the database with initial data",
+                        required=True,
+                    )
+                ],
+            )
+        ]
+
+    @server.get_prompt()
+    async def handle_get_prompt(name: str, arguments: dict[str, str] | None) -> types.GetPromptResult:
+        logger.debug(f"Handling get_prompt request for {name} with args {arguments}")
+        if name != "mcp-teradata":
+            logger.error(f"Unknown prompt: {name}")
+            raise ValueError(f"Unknown prompt: {name}")
+
+        if not arguments or "topic" not in arguments:
+            logger.error("Missing required argument: topic")
+            raise ValueError("Missing required argument: topic")
+
+        topic = arguments["topic"]
+        prompt = PROMPT_TEMPLATE.format(topic=topic)
+
+        logger.debug(f"Generated prompt template for topic: {topic}")
+        return types.GetPromptResult(
+            description=f"Demo template for {topic}",
+            messages=[
+                types.PromptMessage(
+                    role="user",
+                    content=types.TextContent(type="text", text=prompt.strip()),
+                )
+            ],
+        )
+
     @server.list_tools()
     async def handle_list_tools() -> list[types.Tool]:
         """

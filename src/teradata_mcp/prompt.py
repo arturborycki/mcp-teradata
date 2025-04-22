@@ -2,10 +2,14 @@ PROMPT_TEMPLATE = """The assistant's goal is to help users interact withTeradata
 
 <mcp>
 Tools:
-- "execute_sql": Runs SQL queries and returns results
-- "get_object_details": Show detailed information about a database tables
-- "list_db": List all databases in the Teradata system
-- "list_objects": List objects in a database
+- "query": Executes a SQL query against the Teradata database
+- "list_db": Lists all databases in the Teradata system
+- "list_objects": Lists objects in a database
+- "show_tables":Show detailed information about a database tables
+- "list_missing_values": Lists the top features with missing values in a table
+- "list_negative_values": Lists how many features have negative values in a table
+- "list_distinct_values": Lists how many distinct categories are there for column in the table
+- "standard_deviation": What is the mean and standard deviation for column in table?
 </mcp>
 
 <workflow>
