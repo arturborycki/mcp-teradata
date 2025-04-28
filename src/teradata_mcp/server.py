@@ -18,7 +18,7 @@ from mcp.server.models import InitializationOptions
 from mcp.server.stdio import stdio_server
 from .tdsql import obfuscate_password
 from .tdsql import TDConn
-from .prompt import PROMPT_TEMPLATE
+from .prompt import PROMPTS
 
 
 logger = logging.getLogger(__name__)
@@ -242,6 +242,23 @@ async def main():
                     )
                 ],
 
+            ),
+            types.Prompt(
+                name="glm",
+                description="A prompt demonstrate how to train model with GLM in Teradata database",
+                arguments=[
+                    types.PromptArgument(
+                        name="database",
+                        description="Database name to analyze",
+                        required=True,
+                    ),
+                    types.PromptArgument(
+                        name="table",
+                        description="table name to analyze",
+                        required=True,
+                    )
+                ],
+
             )
         ]
 
@@ -254,7 +271,7 @@ async def main():
             
         if name == "Analyze_database":
             database = arguments.get("database", "datbase name")
-            
+            prompt_text = PROMPTS["Analyze_database"].format( database=database)
             return types.GetPromptResult(
                 description=f"Analyze database focus on {database}",
                 messages=[
@@ -269,15 +286,7 @@ async def main():
                         role="user", 
                         content=types.TextContent(
                             type="text",
-                            text=f"""Please perform database analysis focusing on {database}.
-
-    Include in your analysis:
-    - List all tables in the database
-    - List all objects in the database
-    - Show detailed information about a database tables
-
-    Format your analysis in a well-structured manner with clear headings and concise explanations.
-    """
+                            text=prompt_text
                         )
                     )
                 ]
@@ -287,7 +296,7 @@ async def main():
             # Get info_type with a fallback default
             database = arguments.get("database", "database name")
             table = arguments.get("table", "table name")
-            
+            prompt_text = PROMPTS["Analyze_database"].format(table=table, database=database)
             return types.GetPromptResult(
                 description=f"Extracting details on {table} from database {database}",
                 messages=[
@@ -302,22 +311,36 @@ async def main():
                         role="user", 
                         content=types.TextContent(
                             type="text",
-                            text=f"""Provide all the details about {table} in database {database}.
-
-    Include in your analysis:
-    1. Show detailed information about a table {table} in database {database}
-    2. Check negative values in the table
-    3. Check missing values in the table 
-    4. Check distinct values in the table for each column
-    4. Show mean and standard deviation for each numeric column in the table
-
-    Be comprehensive but focus on quality over quantity."
-    """
+                            text=prompt_text
                         )
                     )
                 ]
             )
-        
+        elif name == "glm":
+            # Get info_type with a fallback default
+            database = arguments.get("database", "database name")
+            table = arguments.get("table", "table name")
+            prompt_text = PROMPTS["glm"].format(table=table, database=database)
+            return types.GetPromptResult(
+                description=f"Extracting details on {table} from database {database}",
+                messages=[
+                    types.PromptMessage(
+                        role="assistant", 
+                        content=types.TextContent(
+                            type="text",
+                            text="I am database expert analyzing your database."
+                        )
+                    ),
+                    types.PromptMessage(
+                        role="user", 
+                        content=types.TextContent(
+                            type="text",
+                            text=prompt_text
+                        )
+                    )
+                ]
+            )
+       
         else:
             raise ValueError(f"Unknown prompt: {name}")
 
