@@ -5,6 +5,8 @@ import os
 import signal
 import re
 import teradatasql
+import yaml
+from urllib.parse import urlparse
 from pydantic import AnyUrl
 from typing import Literal
 from typing import Any
@@ -186,6 +188,96 @@ async def stnd_dev(table_name: str, col_name: str) -> ResponseType:
         logger.error(f"Error evaluating features: {e}")
         return format_error_response(str(e))
 
+async def prefetch_tables( db_name: str) -> dict:
+    """Prefetch table and column information"""
+    try:
+        logger.info("Prefetching table descriptions")
+        global _tdconn
+        cur = _tdconn.cursor()
+        rows = cur.execute("select TableName, CommentString from dbc.TablesV tv where UPPER(tv.DatabaseName) = UPPER(?) and tv.TableKind in ('T','V','O');", [db_name])
+        table_results = rows.fetchall()
+        
+        cur_columns = _tdconn.cursor()
+        cur_columns.execute(
+                    """
+                    sel TableName, ColumnName, CASE ColumnType
+                        WHEN '++' THEN 'TD_ANYTYPE'
+                        WHEN 'A1' THEN 'UDT'
+                        WHEN 'AT' THEN 'TIME'
+                        WHEN 'BF' THEN 'BYTE'
+                        WHEN 'BO' THEN 'BLOB'
+                        WHEN 'BV' THEN 'VARBYTE'
+                        WHEN 'CF' THEN 'CHAR'
+                        WHEN 'CO' THEN 'CLOB'
+                        WHEN 'CV' THEN 'VARCHAR'
+                        WHEN 'D' THEN  'DECIMAL'
+                        WHEN 'DA' THEN 'DATE'
+                        WHEN 'DH' THEN 'INTERVAL DAY TO HOUR'
+                        WHEN 'DM' THEN 'INTERVAL DAY TO MINUTE'
+                        WHEN 'DS' THEN 'INTERVAL DAY TO SECOND'
+                        WHEN 'DY' THEN 'INTERVAL DAY'
+                        WHEN 'F' THEN  'FLOAT'
+                        WHEN 'HM' THEN 'INTERVAL HOUR TO MINUTE'
+                        WHEN 'HR' THEN 'INTERVAL HOUR'
+                        WHEN 'HS' THEN 'INTERVAL HOUR TO SECOND'
+                        WHEN 'I1' THEN 'BYTEINT'
+                        WHEN 'I2' THEN 'SMALLINT'
+                        WHEN 'I8' THEN 'BIGINT'
+                        WHEN 'I' THEN  'INTEGER'
+                        WHEN 'MI' THEN 'INTERVAL MINUTE'
+                        WHEN 'MO' THEN 'INTERVAL MONTH'
+                        WHEN 'MS' THEN 'INTERVAL MINUTE TO SECOND'
+                        WHEN 'N' THEN 'NUMBER'
+                        WHEN 'PD' THEN 'PERIOD(DATE)'
+                        WHEN 'PM' THEN 'PERIOD(TIMESTAMP WITH TIME ZONE)'
+                        WHEN 'PS' THEN 'PERIOD(TIMESTAMP)'
+                        WHEN 'PT' THEN 'PERIOD(TIME)'
+                        WHEN 'PZ' THEN 'PERIOD(TIME WITH TIME ZONE)'
+                        WHEN 'SC' THEN 'INTERVAL SECOND'
+                        WHEN 'SZ' THEN 'TIMESTAMP WITH TIME ZONE'
+                        WHEN 'TS' THEN 'TIMESTAMP'
+                        WHEN 'TZ' THEN 'TIME WITH TIME ZONE'
+                        WHEN 'UT' THEN 'UDT'
+                        WHEN 'YM' THEN 'INTERVAL YEAR TO MONTH'
+                        WHEN 'YR' THEN 'INTERVAL YEAR'
+                        WHEN 'AN' THEN 'UDT'
+                        WHEN 'XM' THEN 'XML'
+                        WHEN 'JN' THEN 'JSON'
+                        WHEN 'DT' THEN 'DATASET'
+                        WHEN '??' THEN 'STGEOMETRY''ANY_TYPE'
+                        END as CType, CommentString
+                    from DBC.ColumnsVX where upper(DatabaseName) = upper(?)
+                    """
+                                , [db_name])
+        column_results = cur_columns.fetchall()
+        tables_schema = {}
+        for table_row in table_results:
+            table_name = table_row[0]
+            table_description = table_row[1]
+            tables_schema[table_name] = {
+            "description": table_description,
+            "columns": {}
+            }
+        for column_row in column_results:
+            table_name = column_row[0]
+            column_name = column_row[1]
+            column_type = column_row[2]
+            column_description = column_row[3]
+            if table_name in tables_schema:
+                tables_schema[table_name]["columns"][column_name] = {
+                "type": column_type,
+                "description": column_description
+                }
+        return tables_schema
+
+    except Exception as e:
+        logger.error(f"Error prefetching table descriptions: {e}")
+        return f"Error prefetching table descriptions: {e}"
+
+def data_to_yaml(data: Any) -> str:
+    return yaml.dump(data, indent=2, sort_keys=False)
+
+
 async def main():
     logger.info("Starting Teradata MCP Server")
     server = Server("teradata-mcp")
@@ -194,6 +286,8 @@ async def main():
     parser.add_argument("database_url", help="Database connection URL", nargs="?")
     args = parser.parse_args()
     database_url = os.environ.get("DATABASE_URI", args.database_url)
+    parsed_url = urlparse(database_url)
+    db = parsed_url.path.lstrip('/') 
     if not database_url:
         raise ValueError(
             "Error: No database URL provided. Please specify via 'DATABASE_URI' environment variable or command-line argument.",
@@ -209,6 +303,10 @@ async def main():
         logger.warning(
             "The MCP server will start but database operations will fail until a valid connection is established.",
         )
+
+    tables_info = (await prefetch_tables(db)) 
+    tables_details = data_to_yaml(tables_info)
+
     logger.info("Registering handlers")
 
     @server.list_prompts()
@@ -344,6 +442,32 @@ async def main():
         else:
             raise ValueError(f"Unknown prompt: {name}")
 
+    # Register handlers
+    @server.list_resources()
+    async def handle_list_resources() -> list[types.Resource]:
+        table_resources = [
+            types.Resource(
+            uri=AnyUrl(f"teradata://table/{table_name}"),
+            name=f"{table_name} table",
+            description=f"{tables_info[table_name]['description']}" if tables_info[table_name]['description'] else f"Description of the {table_name} table",
+            mimeType="text/plain",
+            )
+            for table_name in tables_info
+        ]
+
+        return table_resources
+
+    @server.read_resource()
+    async def handle_read_resource(uri: AnyUrl) -> str:
+        if str(uri).startswith("teradata://table"):
+            table_name = str(uri).split("/")[-1]
+            if table_name in tables_info:
+                return data_to_yaml(tables_info[table_name])
+            else:
+                raise ValueError(f"Unknown table: {table_name}")
+        else:
+            raise ValueError(f"Unknown resource: {uri}")
+        
     @server.list_tools()
     async def handle_list_tools() -> list[types.Tool]:
         """
