@@ -194,7 +194,7 @@ async def prefetch_tables( db_name: str) -> dict:
         logger.info("Prefetching table descriptions")
         global _tdconn
         cur = _tdconn.cursor()
-        rows = cur.execute("select TableName, CommentString from dbc.TablesV tv where UPPER(tv.DatabaseName) = UPPER(?) and tv.TableKind in ('T','V','O');", [db_name])
+        rows = cur.execute("select TableName, CommentString, DatabaseName from dbc.TablesV tv where UPPER(tv.DatabaseName) = UPPER(?) and tv.TableKind in ('T','V','O');", [db_name])
         table_results = rows.fetchall()
         
         cur_columns = _tdconn.cursor()
@@ -254,8 +254,10 @@ async def prefetch_tables( db_name: str) -> dict:
         for table_row in table_results:
             table_name = table_row[0]
             table_description = table_row[1]
+            database_name = table_row[2]
             tables_schema[table_name] = {
             "description": table_description,
+            "database": database_name,
             "columns": {}
             }
         for column_row in column_results:
