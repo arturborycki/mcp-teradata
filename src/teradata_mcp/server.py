@@ -6,6 +6,7 @@ import signal
 import re
 import teradatasql
 import yaml
+import asyncio
 from urllib.parse import urlparse
 from pydantic import AnyUrl
 from typing import Literal
@@ -26,6 +27,22 @@ from .prompt import PROMPTS
 logger = logging.getLogger(__name__)
 ResponseType = List[types.TextContent | types.ImageContent | types.EmbeddedResource]
 _tdconn = TDConn()
+_db = ""
+
+def _init_db_from_env():
+    global _tdconn, _db
+    database_url = os.environ.get("DATABASE_URI")
+    if database_url:
+        parsed_url = urlparse(database_url)
+        _db = parsed_url.path.lstrip('/')
+        try:
+            _tdconn = TDConn(database_url)
+            logger.info("Successfully connected to database and initialized connection (HTTP mode)")
+        except Exception as e:
+            logger.warning(f"Could not connect to database: {obfuscate_password(str(e))}")
+            logger.warning("Database operations will fail until a valid connection is established.")
+
+_init_db_from_env()
 
 def format_text_response(text: Any) -> ResponseType:
     """Format a text response."""
@@ -280,6 +297,374 @@ def data_to_yaml(data: Any) -> str:
     return yaml.dump(data, indent=2, sort_keys=False)
 
 
+# --- Handler function definitions (NO decorators here!) ---
+
+async def handle_list_prompts() -> list[types.Prompt]:
+    logger.debug("Handling list_prompts request")
+    return [
+        types.Prompt(
+            name="Analyze_database",
+            description="A prompt demonstrate how to analyze objects in Teradata database",
+            arguments=[
+                types.PromptArgument(
+                    name="database",
+                    description="Database name to analyze",
+                    required=True,
+                )
+            ],
+        ),
+        types.Prompt(
+            name="Analyze_table",
+            description="A prompt demonstrate how to analyze objects in Teradata database",
+            arguments=[
+                types.PromptArgument(
+                    name="database",
+                    description="Database name to analyze",
+                    required=True,
+                ),
+                types.PromptArgument(
+                    name="table",
+                    description="table name to analyze",
+                    required=True,
+                )
+            ],
+
+        ),
+        types.Prompt(
+            name="glm",
+            description="A prompt demonstrate how to train model with GLM in Teradata database",
+            arguments=[
+                types.PromptArgument(
+                    name="database",
+                    description="Database name to analyze",
+                    required=True,
+                ),
+                types.PromptArgument(
+                    name="table",
+                    description="table name to analyze",
+                    required=True,
+                )
+            ],
+
+        )
+    ]
+
+
+async def handle_get_prompt(name: str, arguments: dict[str, str] | None) -> types.GetPromptResult:
+    """Generate a prompt based on the requested type"""
+    # Simple argument handling
+    if arguments is None:
+        arguments = {}
+        
+    if name == "Analyze_database":
+        database = arguments.get("database", "datbase name")
+        prompt_text = PROMPTS["Analyze_database"].format( database=database)
+        return types.GetPromptResult(
+            description=f"Analyze database focus on {database}",
+            messages=[
+                types.PromptMessage(
+                    role="assistant", 
+                    content=types.TextContent(
+                        type="text",
+                        text="I am Database expert specializing in performing database tasks for the user."
+                    )
+                ),
+                types.PromptMessage(
+                    role="user", 
+                    content=types.TextContent(
+                        type="text",
+                        text=prompt_text
+                    )
+                )
+            ]
+        )
+    
+    elif name == "Analyze_table":
+        # Get info_type with a fallback default
+        database = arguments.get("database", "database name")
+        table = arguments.get("table", "table name")
+        prompt_text = PROMPTS["Analyze_database"].format(table=table, database=database)
+        return types.GetPromptResult(
+            description=f"Extracting details on {table} from database {database}",
+            messages=[
+                types.PromptMessage(
+                    role="assistant", 
+                    content=types.TextContent(
+                        type="text",
+                        text="I am database expert analyzing your database."
+                    )
+                ),
+                types.PromptMessage(
+                    role="user", 
+                    content=types.TextContent(
+                        type="text",
+                        text=prompt_text
+                    )
+                )
+            ]
+        )
+    elif name == "glm":
+        # Get info_type with a fallback default
+        database = arguments.get("database", "database name")
+        table = arguments.get("table", "table name")
+        prompt_text = PROMPTS["glm"].format(table=table, database=database)
+        return types.GetPromptResult(
+            description=f"Extracting details on {table} from database {database}",
+            messages=[
+                types.PromptMessage(
+                    role="assistant", 
+                    content=types.TextContent(
+                        type="text",
+                        text="I am database expert analyzing your database."
+                    )
+                ),
+                types.PromptMessage(
+                    role="user", 
+                    content=types.TextContent(
+                        type="text",
+                        text=prompt_text
+                    )
+                )
+            ]
+        )
+   
+    else:
+        raise ValueError(f"Unknown prompt: {name}")
+
+
+async def handle_list_resources() -> list[types.Resource]:
+    global _db
+    tables_info = (await prefetch_tables(_db))
+    # If prefetch_tables returned an error string, handle it gracefully
+    if not isinstance(tables_info, dict):
+        # Return a single resource with the error message
+        return [
+            types.Resource(
+                uri=AnyUrl("teradata://error"),
+                name="Error",
+                description=str(tables_info),
+                mimeType="text/plain",
+            )
+        ]
+    table_resources = [
+        types.Resource(
+            uri=AnyUrl(f"teradata://table/{table_name}"),
+            name=f"{table_name} table",
+            description=f"{tables_info[table_name]['description']}" if tables_info[table_name]['description'] else f"Description of the {table_name} table",
+            mimeType="text/plain",
+        )
+        for table_name in tables_info
+    ]
+    return table_resources
+
+
+async def handle_read_resource(uri: AnyUrl) -> str:
+    global _db
+    tables_info = (await prefetch_tables(_db)) 
+    if str(uri).startswith("teradata://table"):
+        table_name = str(uri).split("/")[-1]
+        if table_name in tables_info:
+            return data_to_yaml(tables_info[table_name])
+        else:
+            raise ValueError(f"Unknown table: {table_name}")
+    else:
+        raise ValueError(f"Unknown resource: {uri}")
+
+
+async def handle_list_tools() -> list[types.Tool]:
+    """
+    List available tools.
+    Each tool specifies its arguments using JSON Schema validation.
+    """
+    logger.info("Listing tools")
+    return [
+        types.Tool(
+            name="query",
+            description="Executes a SQL query against the Teradata database",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "SQL query to execute that is a dialect of Teradata SQL",
+                    },
+                },
+                "required": ["query"],
+            },
+        ),
+        types.Tool(
+            name="list_db",
+            description="List all databases in the Teradata system",
+            inputSchema={
+                "type": "object",
+                "properties": {},
+            },
+        ),
+        types.Tool(
+            name="list_objects",
+            description="List objects in a database",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "db_name": {
+                        "type": "string",
+                        "description": "Database name to list",
+                    },
+                },
+                "required": ["db_name"],
+            },
+        ),
+        types.Tool(
+            name="show_tables",
+            description="Show detailed information about a database tables",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "db_name": {
+                        "type": "string",
+                        "description": "Database name to list",
+                    },                
+                    "obj_name": {
+                        "type": "string",
+                        "description": "Table, object name to list",
+                    },
+                },
+                "required": ["db_name"],
+            },
+        ),
+        types.Tool(
+            name="list_missing_values",
+            description="What are the top features with missing values in a table",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "table_name": {
+                        "type": "string",
+                        "description": "Table name to list",
+                    },
+                },
+                "required": ["table_name"],
+            },
+        ),
+        types.Tool(
+            name="list_negative_values",
+            description="How many features have negative values in a table",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "table_name": {
+                        "type": "string",
+                        "description": "Table name to list",
+                    },
+                },
+                "required": ["table_name"],
+            },
+        ),
+        types.Tool(
+            name="list_distinct_values",
+            description="How many distinct categories are there for column in the table",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "table_name": {
+                        "type": "string",
+                        "description": "Table name to list",
+                    },
+                },
+                "required": ["table_name"],
+            },
+        ),
+        types.Tool(
+            name="standard_deviation",
+            description="What is the mean and standard deviation for column in table?",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "table_name": {
+                        "type": "string",
+                        "description": "Table name to list",
+                    },
+                    "column_name": {
+                        "type": "string",
+                        "description": "Column name to list",
+                    },
+                },
+                "required": ["table_name", "column_name"],
+            },
+        ),
+    ]
+
+
+async def handle_tool_call(
+    name: str, arguments: dict | None
+) -> list[types.TextContent | types.ImageContent | types.EmbeddedResource]:
+    """
+    Handle tool execution requests.
+    Tools can modify server state and notify clients of changes.
+    """
+    logger.info(f"Calling tool: {name}::{arguments}")
+    try:
+        if name == "query":
+            if arguments is None:
+                return [
+                    types.TextContent(type="text", text="Error: No query provided")
+                ]
+            tool_response = await execute_query(arguments["query"])
+            return tool_response
+        elif name == "list_db":
+            tool_response = await list_db()
+            return tool_response
+        elif name == "list_objects":
+            if arguments is None:
+                return [
+                    types.TextContent(type="text", text="Error: Database name provided")
+                ]
+            tool_response = await list_objects(arguments["db_name"])
+            return tool_response
+        elif name == "show_tables":
+            if arguments is None:
+                return [
+                    types.TextContent(type="text", text="Error: Database or table name not provided")
+                ]
+            tool_response = await get_object_details(arguments["db_name"], arguments["obj_name"])
+            return tool_response
+        elif name == "list_missing_values":
+            if arguments is None:
+                return [
+                    types.TextContent(type="text", text="Error: Table name not provided")
+                ]
+            tool_response = await list_missing_val(arguments["table_name"])
+            return tool_response
+        elif name == "list_negative_values":
+            if arguments is None:
+                return [
+                    types.TextContent(type="text", text="Error: Table name not provided")
+                ]
+            tool_response = await list_negative_val(arguments["table_name"])
+            return tool_response
+        elif name == "list_distinct_values":
+            if arguments is None:
+                return [
+                    types.TextContent(type="text", text="Error: Table name not provided")
+                ]
+            tool_response = await list_dist_cat(arguments["table_name"])
+            return tool_response
+        elif name == "standard_deviation":
+            if arguments is None:
+                return [
+                    types.TextContent(type="text", text="Error: Table name or column name not provided")
+                ]
+            tool_response = await stnd_dev(arguments["table_name"], arguments["column_name"])
+            return tool_response                        
+
+        return [types.TextContent(type="text", text=f"Unsupported tool: {name}")]
+
+    except Exception as e:
+        logger.error(f"Error executing tool {name}: {e}")
+        raise ValueError(f"Error executing tool {name}: {str(e)}")
+
+
+# --- CLI/stdio entrypoint ---
 async def main():
     logger.info("Starting Teradata MCP Server")
     server = Server("teradata-mcp")
@@ -289,7 +674,8 @@ async def main():
     args = parser.parse_args()
     database_url = os.environ.get("DATABASE_URI", args.database_url)
     parsed_url = urlparse(database_url)
-    db = parsed_url.path.lstrip('/') 
+    global _db
+    _db = parsed_url.path.lstrip('/') 
     if not database_url:
         raise ValueError(
             "Error: No database URL provided. Please specify via 'DATABASE_URI' environment variable or command-line argument.",
@@ -306,363 +692,34 @@ async def main():
             "The MCP server will start but database operations will fail until a valid connection is established.",
         )
 
-    tables_info = (await prefetch_tables(db)) 
-    tables_details = data_to_yaml(tables_info)
-
     logger.info("Registering handlers")
 
+    # Register handlers with decorators (inside main)
     @server.list_prompts()
-    async def handle_list_prompts() -> list[types.Prompt]:
-        logger.debug("Handling list_prompts request")
-        return [
-            types.Prompt(
-                name="Analyze_database",
-                description="A prompt demonstrate how to analyze objects in Teradata database",
-                arguments=[
-                    types.PromptArgument(
-                        name="database",
-                        description="Database name to analyze",
-                        required=True,
-                    )
-                ],
-            ),
-            types.Prompt(
-                name="Analyze_table",
-                description="A prompt demonstrate how to analyze objects in Teradata database",
-                arguments=[
-                    types.PromptArgument(
-                        name="database",
-                        description="Database name to analyze",
-                        required=True,
-                    ),
-                    types.PromptArgument(
-                        name="table",
-                        description="table name to analyze",
-                        required=True,
-                    )
-                ],
-
-            ),
-            types.Prompt(
-                name="glm",
-                description="A prompt demonstrate how to train model with GLM in Teradata database",
-                arguments=[
-                    types.PromptArgument(
-                        name="database",
-                        description="Database name to analyze",
-                        required=True,
-                    ),
-                    types.PromptArgument(
-                        name="table",
-                        description="table name to analyze",
-                        required=True,
-                    )
-                ],
-
-            )
-        ]
+    async def _handle_list_prompts():
+        return await handle_list_prompts()
 
     @server.get_prompt()
-    async def handle_get_prompt(name: str, arguments: dict[str, str] | None) -> types.GetPromptResult:
-        """Generate a prompt based on the requested type"""
-        # Simple argument handling
-        if arguments is None:
-            arguments = {}
-            
-        if name == "Analyze_database":
-            database = arguments.get("database", "datbase name")
-            prompt_text = PROMPTS["Analyze_database"].format( database=database)
-            return types.GetPromptResult(
-                description=f"Analyze database focus on {database}",
-                messages=[
-                    types.PromptMessage(
-                        role="assistant", 
-                        content=types.TextContent(
-                            type="text",
-                            text="I am Database expert specializing in performing database tasks for the user."
-                        )
-                    ),
-                    types.PromptMessage(
-                        role="user", 
-                        content=types.TextContent(
-                            type="text",
-                            text=prompt_text
-                        )
-                    )
-                ]
-            )
-        
-        elif name == "Analyze_table":
-            # Get info_type with a fallback default
-            database = arguments.get("database", "database name")
-            table = arguments.get("table", "table name")
-            prompt_text = PROMPTS["Analyze_database"].format(table=table, database=database)
-            return types.GetPromptResult(
-                description=f"Extracting details on {table} from database {database}",
-                messages=[
-                    types.PromptMessage(
-                        role="assistant", 
-                        content=types.TextContent(
-                            type="text",
-                            text="I am database expert analyzing your database."
-                        )
-                    ),
-                    types.PromptMessage(
-                        role="user", 
-                        content=types.TextContent(
-                            type="text",
-                            text=prompt_text
-                        )
-                    )
-                ]
-            )
-        elif name == "glm":
-            # Get info_type with a fallback default
-            database = arguments.get("database", "database name")
-            table = arguments.get("table", "table name")
-            prompt_text = PROMPTS["glm"].format(table=table, database=database)
-            return types.GetPromptResult(
-                description=f"Extracting details on {table} from database {database}",
-                messages=[
-                    types.PromptMessage(
-                        role="assistant", 
-                        content=types.TextContent(
-                            type="text",
-                            text="I am database expert analyzing your database."
-                        )
-                    ),
-                    types.PromptMessage(
-                        role="user", 
-                        content=types.TextContent(
-                            type="text",
-                            text=prompt_text
-                        )
-                    )
-                ]
-            )
-       
-        else:
-            raise ValueError(f"Unknown prompt: {name}")
+    async def _handle_get_prompt(name: str, arguments: dict[str, str] | None):
+        return await handle_get_prompt(name, arguments)
 
-    # Register handlers
     @server.list_resources()
-    async def handle_list_resources() -> list[types.Resource]:
-        table_resources = [
-            types.Resource(
-            uri=AnyUrl(f"teradata://table/{table_name}"),
-            name=f"{table_name} table",
-            description=f"{tables_info[table_name]['description']}" if tables_info[table_name]['description'] else f"Description of the {table_name} table",
-            mimeType="text/plain",
-            )
-            for table_name in tables_info
-        ]
-
-        return table_resources
+    async def _handle_list_resources():
+        return await handle_list_resources()
 
     @server.read_resource()
-    async def handle_read_resource(uri: AnyUrl) -> str:
-        if str(uri).startswith("teradata://table"):
-            table_name = str(uri).split("/")[-1]
-            if table_name in tables_info:
-                return data_to_yaml(tables_info[table_name])
-            else:
-                raise ValueError(f"Unknown table: {table_name}")
-        else:
-            raise ValueError(f"Unknown resource: {uri}")
-        
+    async def _handle_read_resource(uri: AnyUrl):
+        return await handle_read_resource(uri)
+
     @server.list_tools()
-    async def handle_list_tools() -> list[types.Tool]:
-        """
-        List available tools.
-        Each tool specifies its arguments using JSON Schema validation.
-        """
-        logger.info("Listing tools")
-        return [
-            types.Tool(
-                name="query",
-                description="Executes a SQL query against the Teradata database",
-                inputSchema={
-                    "type": "object",
-                    "properties": {
-                        "query": {
-                            "type": "string",
-                            "description": "SQL query to execute that is a dialect of Teradata SQL",
-                        },
-                    },
-                    "required": ["query"],
-                },
-            ),
-            types.Tool(
-                name="list_db",
-                description="List all databases in the Teradata system",
-                inputSchema={
-                    "type": "object",
-                    "properties": {},
-                },
-            ),
-            types.Tool(
-                name="list_objects",
-                description="List objects in a database",
-                inputSchema={
-                    "type": "object",
-                    "properties": {
-                        "db_name": {
-                            "type": "string",
-                            "description": "Database name to list",
-                        },
-                    },
-                    "required": ["db_name"],
-                },
-            ),
-            types.Tool(
-                name="show_tables",
-                description="Show detailed information about a database tables",
-                inputSchema={
-                    "type": "object",
-                    "properties": {
-                        "db_name": {
-                            "type": "string",
-                            "description": "Database name to list",
-                        },                
-                        "obj_name": {
-                            "type": "string",
-                            "description": "Table, object name to list",
-                        },
-                    },
-                    "required": ["db_name"],
-                },
-            ),
-            types.Tool(
-                name="list_missing_values",
-                description="What are the top features with missing values in a table",
-                inputSchema={
-                    "type": "object",
-                    "properties": {
-                        "table_name": {
-                            "type": "string",
-                            "description": "Table name to list",
-                        },
-                    },
-                    "required": ["table_name"],
-                },
-            ),
-            types.Tool(
-                name="list_negative_values",
-                description="How many features have negative values in a table",
-                inputSchema={
-                    "type": "object",
-                    "properties": {
-                        "table_name": {
-                            "type": "string",
-                            "description": "Table name to list",
-                        },
-                    },
-                    "required": ["table_name"],
-                },
-            ),
-            types.Tool(
-                name="list_distinct_values",
-                description="How many distinct categories are there for column in the table",
-                inputSchema={
-                    "type": "object",
-                    "properties": {
-                        "table_name": {
-                            "type": "string",
-                            "description": "Table name to list",
-                        },
-                    },
-                    "required": ["table_name"],
-                },
-            ),
-            types.Tool(
-                name="standard_deviation",
-                description="What is the mean and standard deviation for column in table?",
-                inputSchema={
-                    "type": "object",
-                    "properties": {
-                        "table_name": {
-                            "type": "string",
-                            "description": "Table name to list",
-                        },
-                        "column_name": {
-                            "type": "string",
-                            "description": "Column name to list",
-                        },
-                    },
-                    "required": ["table_name", "column_name"],
-                },
-            ),
-        ]
-    
+    async def _handle_list_tools():
+        return await handle_list_tools()
+
     @server.call_tool()
-    async def handle_tool_call(
-        name: str, arguments: dict | None
-    ) -> list[types.TextContent | types.ImageContent | types.EmbeddedResource]:
-        """
-        Handle tool execution requests.
-        Tools can modify server state and notify clients of changes.
-        """
-        logger.info(f"Calling tool: {name}::{arguments}")
-        try:
-            if name == "query":
-                if arguments is None:
-                    return [
-                        types.TextContent(type="text", text="Error: No query provided")
-                    ]
-                tool_response = await execute_query(arguments["query"])
-                return tool_response
-            elif name == "list_db":
-                tool_response = await list_db()
-                return tool_response
-            elif name == "list_objects":
-                if arguments is None:
-                    return [
-                        types.TextContent(type="text", text="Error: Database name provided")
-                    ]
-                tool_response = await list_objects(arguments["db_name"])
-                return tool_response
-            elif name == "show_tables":
-                if arguments is None:
-                    return [
-                        types.TextContent(type="text", text="Error: Database or table name not provided")
-                    ]
-                tool_response = await get_object_details(arguments["db_name"], arguments["obj_name"])
-                return tool_response
-            elif name == "list_missing_values":
-                if arguments is None:
-                    return [
-                        types.TextContent(type="text", text="Error: Table name not provided")
-                    ]
-                tool_response = await list_missing_val(arguments["table_name"])
-                return tool_response
-            elif name == "list_negative_values":
-                if arguments is None:
-                    return [
-                        types.TextContent(type="text", text="Error: Table name not provided")
-                    ]
-                tool_response = await list_negative_val(arguments["table_name"])
-                return tool_response
-            elif name == "list_distinct_values":
-                if arguments is None:
-                    return [
-                        types.TextContent(type="text", text="Error: Table name not provided")
-                    ]
-                tool_response = await list_dist_cat(arguments["table_name"])
-                return tool_response
-            elif name == "standard_deviation":
-                if arguments is None:
-                    return [
-                        types.TextContent(type="text", text="Error: Table name or column name not provided")
-                    ]
-                tool_response = await stnd_dev(arguments["table_name"], arguments["column_name"])
-                return tool_response                        
+    async def _handle_tool_call(name: str, arguments: dict | None):
+        return await handle_tool_call(name, arguments)
 
-            return [types.TextContent(type="text", text=f"Unsupported tool: {name}")]
-
-        except Exception as e:
-            logger.error(f"Error executing tool {name}: {e}")
-            raise ValueError(f"Error executing tool {name}: {str(e)}")
-        
+    # --- stdio server code ---
     async with stdio_server() as (read_stream, write_stream):
         logger.info("Server running with stdio transport")
         await server.run(
@@ -679,4 +736,4 @@ async def main():
         )
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
