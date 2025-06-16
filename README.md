@@ -65,6 +65,12 @@ The server offers six core tools:
   }
 }
 ```
+## Usage as API container
+Make sure to edit docker-compose.yml and update environment variable
+```
+docker compose build
+docker compose up
+```
 
 ## Building
 
