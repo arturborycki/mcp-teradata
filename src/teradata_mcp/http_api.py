@@ -50,9 +50,28 @@ async def call_tool(name: str, arguments: dict = None):
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
+@app.get("/call")
+async def call_mcp_get():
+    """Simple GET version that returns available methods"""
+    return {
+        "message": "Use POST to call MCP methods",
+        "available_methods": [
+            "tools/list",
+            "tools/call", 
+            "prompts/list",
+            "prompts/get",
+            "resources/list", 
+            "resources/read"
+        ],
+        "example": {
+            "method": "tools/list",
+            "params": {}
+        }
+    }
+
 # NEW: Generic /call endpoint
 @app.post("/call")
-async def call_mcp(request: CallRequest):
+async def call_mcp_post(request: CallRequest):
     """
     Generic endpoint to handle any MCP operation
     Examples:
