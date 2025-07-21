@@ -213,8 +213,23 @@ async def mcp_sse(request: dict):
             # Handle different MCP methods
             if method == "tools/list":
                 result = await server.handle_list_tools()
-                # Convert Tool objects to dictionaries
-                tools_dict = [tool.model_dump() if hasattr(tool, 'model_dump') else tool.__dict__ for tool in result]
+                # Clean conversion of Tool objects
+                tools_dict = []
+                for tool in result:
+                    try:
+                        if hasattr(tool, 'model_dump'):
+                            tool_data = tool.model_dump()
+                        else:
+                            tool_data = {
+                                "name": getattr(tool, 'name', ''),
+                                "description": getattr(tool, 'description', ''),
+                                "inputSchema": getattr(tool, 'inputSchema', {})
+                            }
+                        tools_dict.append(tool_data)
+                    except Exception as e:
+                        # Skip problematic tools
+                        continue
+                        
                 response = {
                     "jsonrpc": "2.0",
                     "id": id_val,
@@ -225,8 +240,31 @@ async def mcp_sse(request: dict):
                 name = params.get("name")
                 arguments = params.get("arguments", {})
                 result = await server.handle_tool_call(name, arguments)
-                # Convert TextContent objects to dictionaries
-                content_dict = [item.model_dump() if hasattr(item, 'model_dump') else item.__dict__ for item in result]
+                
+                # Safely convert content to simple strings
+                content_dict = []
+                for item in result:
+                    try:
+                        if hasattr(item, 'text'):
+                            # Clean the text content
+                            text_content = str(item.text).strip()
+                            content_dict.append({
+                                "type": "text",
+                                "text": text_content
+                            })
+                        else:
+                            # Convert to string and clean
+                            text_content = str(item).strip()
+                            content_dict.append({
+                                "type": "text",
+                                "text": text_content
+                            })
+                    except Exception as e:
+                        content_dict.append({
+                            "type": "text",
+                            "text": f"Error processing result: {str(e)}"
+                        })
+                        
                 response = {
                     "jsonrpc": "2.0",
                     "id": id_val,
@@ -235,8 +273,21 @@ async def mcp_sse(request: dict):
                 
             elif method == "prompts/list":
                 result = await server.handle_list_prompts()
-                # Convert Prompt objects to dictionaries
-                prompts_dict = [prompt.model_dump() if hasattr(prompt, 'model_dump') else prompt.__dict__ for prompt in result]
+                prompts_dict = []
+                for prompt in result:
+                    try:
+                        if hasattr(prompt, 'model_dump'):
+                            prompt_data = prompt.model_dump()
+                        else:
+                            prompt_data = {
+                                "name": getattr(prompt, 'name', ''),
+                                "description": getattr(prompt, 'description', ''),
+                                "arguments": getattr(prompt, 'arguments', [])
+                            }
+                        prompts_dict.append(prompt_data)
+                    except Exception as e:
+                        continue
+                        
                 response = {
                     "jsonrpc": "2.0",
                     "id": id_val,
@@ -245,8 +296,22 @@ async def mcp_sse(request: dict):
                 
             elif method == "resources/list":
                 result = await server.handle_list_resources()
-                # Convert Resource objects to dictionaries
-                resources_dict = [resource.model_dump() if hasattr(resource, 'model_dump') else resource.__dict__ for resource in result]
+                resources_dict = []
+                for resource in result:
+                    try:
+                        if hasattr(resource, 'model_dump'):
+                            resource_data = resource.model_dump()
+                        else:
+                            resource_data = {
+                                "uri": str(getattr(resource, 'uri', '')),
+                                "name": getattr(resource, 'name', ''),
+                                "description": getattr(resource, 'description', ''),
+                                "mimeType": getattr(resource, 'mimeType', 'text/plain')
+                            }
+                        resources_dict.append(resource_data)
+                    except Exception as e:
+                        continue
+                        
                 response = {
                     "jsonrpc": "2.0",
                     "id": id_val,
@@ -260,16 +325,30 @@ async def mcp_sse(request: dict):
                     "error": {"code": -32601, "message": f"Method not found: {method}"}
                 }
             
-            # Send SSE formatted response
-            yield f"data: {json.dumps(response)}\n\n"
+            # Use json.dumps with proper error handling and ensure_ascii
+            try:
+                json_response = json.dumps(response, ensure_ascii=True, separators=(',', ':'))
+                yield f"data: {json_response}\n\n"
+            except (TypeError, ValueError) as e:
+                error_response = {
+                    "jsonrpc": "2.0",
+                    "id": id_val,
+                    "error": {"code": -32603, "message": f"JSON serialization error: {str(e)}"}
+                }
+                json_error = json.dumps(error_response, ensure_ascii=True, separators=(',', ':'))
+                yield f"data: {json_error}\n\n"
             
         except Exception as e:
             error_response = {
                 "jsonrpc": "2.0",
                 "id": request.get("id", 1),
-                "error": {"code": -32603, "message": str(e)}
+                "error": {"code": -32603, "message": f"Server error: {str(e)}"}
             }
-            yield f"data: {json.dumps(error_response)}\n\n"
+            try:
+                json_error = json.dumps(error_response, ensure_ascii=True, separators=(',', ':'))
+                yield f"data: {json_error}\n\n"
+            except:
+                yield f"data: {{'jsonrpc': '2.0', 'id': 1, 'error': {{'code': -32603, 'message': 'Critical JSON error'}}}}\n\n"
     
     return StreamingResponse(
         generate_sse_response(),
