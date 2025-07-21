@@ -213,36 +213,44 @@ async def mcp_sse(request: dict):
             # Handle different MCP methods
             if method == "tools/list":
                 result = await server.handle_list_tools()
+                # Convert Tool objects to dictionaries
+                tools_dict = [tool.model_dump() if hasattr(tool, 'model_dump') else tool.__dict__ for tool in result]
                 response = {
                     "jsonrpc": "2.0",
                     "id": id_val,
-                    "result": {"tools": result}
+                    "result": {"tools": tools_dict}
                 }
                 
             elif method == "tools/call":
                 name = params.get("name")
                 arguments = params.get("arguments", {})
                 result = await server.handle_tool_call(name, arguments)
+                # Convert TextContent objects to dictionaries
+                content_dict = [item.model_dump() if hasattr(item, 'model_dump') else item.__dict__ for item in result]
                 response = {
                     "jsonrpc": "2.0",
                     "id": id_val,
-                    "result": {"content": result}
+                    "result": {"content": content_dict}
                 }
                 
             elif method == "prompts/list":
                 result = await server.handle_list_prompts()
+                # Convert Prompt objects to dictionaries
+                prompts_dict = [prompt.model_dump() if hasattr(prompt, 'model_dump') else prompt.__dict__ for prompt in result]
                 response = {
                     "jsonrpc": "2.0",
                     "id": id_val,
-                    "result": {"prompts": result}
+                    "result": {"prompts": prompts_dict}
                 }
                 
             elif method == "resources/list":
                 result = await server.handle_list_resources()
+                # Convert Resource objects to dictionaries
+                resources_dict = [resource.model_dump() if hasattr(resource, 'model_dump') else resource.__dict__ for resource in result]
                 response = {
                     "jsonrpc": "2.0",
                     "id": id_val,
-                    "result": {"resources": result}
+                    "result": {"resources": resources_dict}
                 }
                 
             else:
@@ -283,10 +291,12 @@ async def mcp_sse_get():
     async def generate_tools_sse():
         try:
             tools = await server.handle_list_tools()
+            # Convert Tool objects to dictionaries
+            tools_dict = [tool.model_dump() if hasattr(tool, 'model_dump') else tool.__dict__ for tool in tools]
             response = {
                 "jsonrpc": "2.0",
                 "id": 1,
-                "result": {"tools": tools}
+                "result": {"tools": tools_dict}
             }
             yield f"data: {json.dumps(response)}\n\n"
         except Exception as e:
