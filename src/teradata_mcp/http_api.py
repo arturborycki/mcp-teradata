@@ -1,12 +1,35 @@
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import AnyUrl, BaseModel
-import asyncio
 import json
 import os
 from typing import Optional, Dict, Any
 
 from . import server
+
+# Optional authentication setup
+KEYCLOAK_ENABLED = os.getenv("KEYCLOAK_ENABLED", "false").lower() == "true"
+
+# Placeholder for authentication function
+async def verify_authentication(request: Request) -> Optional[Dict[str, Any]]:
+    """Verify authentication if enabled"""
+    if not KEYCLOAK_ENABLED:
+        return None
+    
+    # Extract Bearer token from Authorization header
+    auth_header = request.headers.get("authorization")
+    if not auth_header or not auth_header.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Authentication required")
+    
+    token = auth_header.split(" ")[1]
+    
+    # TODO: Implement actual Keycloak token verification
+    # For now, just return a placeholder user info
+    return {
+        "sub": "user-id",
+        "preferred_username": "authenticated-user",
+        "realm_access": {"roles": ["data_analyst", "admin"]}
+    }
 
 app = FastAPI()
 
@@ -200,15 +223,18 @@ async def call_mcp_tool(request: dict):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/sse")
-async def mcp_sse(request: dict):
+async def mcp_sse(request_body: dict, request: Request):
     """
-    Server-Sent Events endpoint for MCP-over-HTTP (Flowise compatible)
+    Server-Sent Events endpoint for MCP-over-HTTP with optional authentication
     """
+    # Verify authentication if enabled
+    user_info = await verify_authentication(request)
+    
     async def generate_sse_response():
         try:
-            method = request.get("method")
-            params = request.get("params", {})
-            id_val = request.get("id", 1)
+            method = request_body.get("method")
+            params = request_body.get("params", {})
+            id_val = request_body.get("id", 1)
             
             # Handle MCP initialization - REQUIRED!
             if method == "initialize":
