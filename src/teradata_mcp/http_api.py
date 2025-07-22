@@ -210,8 +210,27 @@ async def mcp_sse(request: dict):
             params = request.get("params", {})
             id_val = request.get("id", 1)
             
+            # Handle MCP initialization - REQUIRED!
+            if method == "initialize":
+                response = {
+                    "jsonrpc": "2.0",
+                    "id": id_val,
+                    "result": {
+                        "protocolVersion": "2024-11-05",
+                        "capabilities": {
+                            "tools": {},
+                            "prompts": {},
+                            "resources": {}
+                        },
+                        "serverInfo": {
+                            "name": "teradata-mcp",
+                            "version": "1.0.0"
+                        }
+                    }
+                }
+                
             # Handle different MCP methods
-            if method == "tools/list":
+            elif method == "tools/list":
                 result = await server.handle_list_tools()
                 # Clean conversion of Tool objects
                 tools_dict = []
