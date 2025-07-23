@@ -441,3 +441,214 @@ async def mcp_sse_get():
             "Access-Control-Allow-Headers": "*",
         }
     )
+
+# Authentication endpoint with X-Client-* headers
+async def verify_client_credentials(request: Request) -> Optional[Dict[str, Any]]:
+    """Verify client credentials from X-Client-* headers"""
+    if not KEYCLOAK_ENABLED:
+        return None
+    
+    client_id = request.headers.get("X-Client-ID", "").strip()
+    client_secret = request.headers.get("X-Client-Secret", "").strip()
+    
+    if not client_id or not client_secret:
+        raise HTTPException(status_code=401, detail="Client credentials required")
+    
+    # Verify against your expected client credentials
+    expected_client_id = os.getenv("KEYCLOAK_CLIENT_ID", "mcp-teradata")
+    expected_client_secret = os.getenv("KEYCLOAK_CLIENT_SECRET", "")
+    
+    if client_id != expected_client_id or client_secret != expected_client_secret:
+        raise HTTPException(status_code=401, detail="Invalid client credentials")
+    
+    # Return service account user info
+    return {
+        "sub": "service-account-mcp-teradata",
+        "preferred_username": "service-account",
+        "realm_access": {"roles": ["admin", "data_analyst", "data_reader"]}
+    }
+
+@app.post("/auth/sse")
+async def auth_sse(request_body: dict, request: Request):
+    """
+    Authentication-based SSE endpoint for MCP-over-HTTP
+    Uses X-Client-ID and X-Client-Secret headers for authentication
+    """
+    # Verify client credentials
+    user_info = await verify_client_credentials(request)
+    
+    async def generate_sse_response():
+        try:
+            method = request_body.get("method")
+            params = request_body.get("params", {})
+            id_val = request_body.get("id", 1)
+            
+            # Handle MCP initialization - REQUIRED!
+            if method == "initialize":
+                response = {
+                    "jsonrpc": "2.0",
+                    "id": id_val,
+                    "result": {
+                        "protocolVersion": "2024-11-05",
+                        "capabilities": {
+                            "tools": {},
+                            "prompts": {},
+                            "resources": {}
+                        },
+                        "serverInfo": {
+                            "name": "teradata-mcp",
+                            "version": "1.0.0"
+                        }
+                    }
+                }
+                
+            # Handle different MCP methods
+            elif method == "tools/list":
+                result = await server.handle_list_tools()
+                # Clean conversion of Tool objects
+                tools_dict = []
+                for tool in result:
+                    try:
+                        if hasattr(tool, 'model_dump'):
+                            tool_data = tool.model_dump()
+                        else:
+                            tool_data = {
+                                "name": getattr(tool, 'name', ''),
+                                "description": getattr(tool, 'description', ''),
+                                "inputSchema": getattr(tool, 'inputSchema', {})
+                            }
+                        tools_dict.append(tool_data)
+                    except Exception:
+                        # Skip problematic tools
+                        continue
+                        
+                response = {
+                    "jsonrpc": "2.0",
+                    "id": id_val,
+                    "result": {"tools": tools_dict}
+                }
+                
+            elif method == "tools/call":
+                name = params.get("name")
+                arguments = params.get("arguments", {})
+                result = await server.handle_tool_call(name, arguments)
+                
+                # Safely convert content to simple strings
+                content_dict = []
+                for item in result:
+                    try:
+                        if hasattr(item, 'text'):
+                            # Clean the text content
+                            text_content = str(item.text).strip()
+                            content_dict.append({
+                                "type": "text",
+                                "text": text_content
+                            })
+                        else:
+                            # Convert to string and clean
+                            text_content = str(item).strip()
+                            content_dict.append({
+                                "type": "text",
+                                "text": text_content
+                            })
+                    except Exception as e:
+                        content_dict.append({
+                            "type": "text",
+                            "text": f"Error processing result: {str(e)}"
+                        })
+                        
+                response = {
+                    "jsonrpc": "2.0",
+                    "id": id_val,
+                    "result": {"content": content_dict}
+                }
+                
+            elif method == "prompts/list":
+                result = await server.handle_list_prompts()
+                prompts_dict = []
+                for prompt in result:
+                    try:
+                        if hasattr(prompt, 'model_dump'):
+                            prompt_data = prompt.model_dump()
+                        else:
+                            prompt_data = {
+                                "name": getattr(prompt, 'name', ''),
+                                "description": getattr(prompt, 'description', ''),
+                                "arguments": getattr(prompt, 'arguments', [])
+                            }
+                        prompts_dict.append(prompt_data)
+                    except Exception:
+                        continue
+                        
+                response = {
+                    "jsonrpc": "2.0",
+                    "id": id_val,
+                    "result": {"prompts": prompts_dict}
+                }
+                
+            elif method == "resources/list":
+                result = await server.handle_list_resources()
+                resources_dict = []
+                for resource in result:
+                    try:
+                        if hasattr(resource, 'model_dump'):
+                            resource_data = resource.model_dump()
+                        else:
+                            resource_data = {
+                                "uri": str(getattr(resource, 'uri', '')),
+                                "name": getattr(resource, 'name', ''),
+                                "description": getattr(resource, 'description', ''),
+                                "mimeType": getattr(resource, 'mimeType', 'text/plain')
+                            }
+                        resources_dict.append(resource_data)
+                    except Exception:
+                        continue
+                        
+                response = {
+                    "jsonrpc": "2.0",
+                    "id": id_val,
+                    "result": {"resources": resources_dict}
+                }
+                
+            else:
+                response = {
+                    "jsonrpc": "2.0",
+                    "id": id_val,
+                    "error": {"code": -32601, "message": f"Method not found: {method}"}
+                }
+            
+            # Use json.dumps with proper error handling and ensure_ascii
+            try:
+                json_response = json.dumps(response, ensure_ascii=True, separators=(',', ':'))
+                yield f"data: {json_response}\n\n"
+            except (TypeError, ValueError) as e:
+                error_response = {
+                    "jsonrpc": "2.0",
+                    "id": id_val,
+                    "error": {"code": -32603, "message": f"JSON serialization error: {str(e)}"}
+                }
+                json_error = json.dumps(error_response, ensure_ascii=True, separators=(',', ':'))
+                yield f"data: {json_error}\n\n"
+            
+        except Exception as e:
+            error_response = {
+                "jsonrpc": "2.0",
+                "id": request_body.get("id", 1),
+                "error": {"code": -32603, "message": f"Server error: {str(e)}"}
+            }
+            try:
+                json_error = json.dumps(error_response, ensure_ascii=True, separators=(',', ':'))
+                yield f"data: {json_error}\n\n"
+            except Exception:
+                yield "data: {\"jsonrpc\": \"2.0\", \"id\": 1, \"error\": {\"code\": -32603, \"message\": \"Critical JSON error\"}}\n\n"
+    
+    return StreamingResponse(
+        generate_sse_response(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Headers": "*",
+        }
+    )

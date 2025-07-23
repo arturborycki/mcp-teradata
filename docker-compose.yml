@@ -6,6 +6,11 @@ services:
     container_name: mcp-teradata
     environment:
       - DATABASE_URI=teradatasql://user:passwd@host/db
+      - KEYCLOAK_ENABLED=true
+      - KEYCLOAK_SERVER_URL=http://your-keycloak:8080
+      - KEYCLOAK_REALM_NAME=mcp-realm
+      - KEYCLOAK_CLIENT_ID=mcp-teradata
+      - KEYCLOAK_CLIENT_SECRET=6DE6UQ2vyK1fKaFG8xsi9vazdVr3ryXE
     ports:
       - "8000:8000"
     restart: unless-stopped
