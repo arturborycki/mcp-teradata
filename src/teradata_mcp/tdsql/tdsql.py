@@ -52,11 +52,20 @@ class TDConn:
         if connection_url is None:
             self.conn = None
         else:
-            parsed_url = urlparse(connection_url)
+            temp_url = connection_url.replace('\\"', '__QUOTE_PLACEHOLDER__')
+            parsed_url = urlparse(temp_url)
             user = parsed_url.username
             password = parsed_url.password
             host = parsed_url.hostname
             database = parsed_url.path.lstrip('/') 
+
+            # Restore quotes in password if they were replaced
+            if password and '__QUOTE_PLACEHOLDER__' in password:
+                password = password.replace('__QUOTE_PLACEHOLDER__', '"')
+            
+            # Handle cases where password might have surrounding quotes
+            if password and (password.startswith('"') and password.endswith('"')):
+                password = password[1:-1]  # Remove surrounding quotes
             self.connection_url = connection_url
             try:
                 self.conn = teradatasql.connect (
