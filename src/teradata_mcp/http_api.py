@@ -38,6 +38,42 @@ class CallRequest(BaseModel):
     method: str  # "tools/call", "prompts/get", "resources/read", etc.
     params: Optional[Dict[str, Any]] = None
 
+@app.get("/debug/tools")
+async def debug_tools():
+    """Debug endpoint to see raw tool output"""
+    tools = await server.handle_list_tools()
+    debug_output = []
+    
+    for tool in tools:
+        tool_info = {
+            "raw_tool": str(tool),
+            "type": type(tool).__name__,
+            "has_model_dump": hasattr(tool, 'model_dump'),
+            "attributes": {}
+        }
+        
+        # Try to get attributes
+        for attr in ['name', 'description', 'inputSchema']:
+            try:
+                value = getattr(tool, attr, None)
+                tool_info["attributes"][attr] = {
+                    "value": value,
+                    "type": type(value).__name__
+                }
+            except Exception as e:
+                tool_info["attributes"][attr] = {"error": str(e)}
+        
+        # Try model_dump if available
+        if hasattr(tool, 'model_dump'):
+            try:
+                tool_info["model_dump"] = tool.model_dump()
+            except Exception as e:
+                tool_info["model_dump_error"] = str(e)
+                
+        debug_output.append(tool_info)
+    
+    return {"debug": debug_output}
+
 @app.get("/")
 async def root():
     return {"message": "Teradata MCP Server is running", "status": "ok"}
@@ -209,7 +245,45 @@ async def mcp_jsonrpc(request: dict):
 async def get_mcp_tools():
     """Return tools in MCP format for Flowise"""
     tools = await server.handle_list_tools()
-    return {"tools": tools}
+    # Convert tools with proper schema validation
+    tools_dict = []
+    for tool in tools:
+        try:
+            if hasattr(tool, 'model_dump'):
+                tool_data = tool.model_dump()
+            else:
+                # Ensure inputSchema is properly structured
+                input_schema = getattr(tool, 'inputSchema', {})
+                if isinstance(input_schema, dict):
+                    # Ensure required fields are present
+                    if 'type' not in input_schema:
+                        input_schema['type'] = 'object'
+                    if 'properties' not in input_schema:
+                        input_schema['properties'] = {}
+                        
+                tool_data = {
+                    "name": getattr(tool, 'name', ''),
+                    "description": getattr(tool, 'description', ''),
+                    "inputSchema": input_schema
+                }
+            
+            # Validate and clean the schema
+            if 'inputSchema' in tool_data:
+                schema = tool_data['inputSchema']
+                # Ensure it's a valid JSON schema object
+                if not isinstance(schema, dict):
+                    schema = {"type": "object", "properties": {}}
+                if 'type' not in schema:
+                    schema['type'] = 'object'
+                if schema['type'] == 'object' and 'properties' not in schema:
+                    schema['properties'] = {}
+                tool_data['inputSchema'] = schema
+                
+            tools_dict.append(tool_data)
+        except Exception:
+            continue
+            
+    return {"tools": tools_dict}
 
 @app.post("/mcp/tools/call")
 async def call_mcp_tool(request: dict):
@@ -258,18 +332,40 @@ async def mcp_sse(request_body: dict, request: Request):
             # Handle different MCP methods
             elif method == "tools/list":
                 result = await server.handle_list_tools()
-                # Clean conversion of Tool objects
+                # Clean conversion of Tool objects with proper schema handling
                 tools_dict = []
                 for tool in result:
                     try:
                         if hasattr(tool, 'model_dump'):
                             tool_data = tool.model_dump()
                         else:
+                            # Ensure inputSchema is properly structured
+                            input_schema = getattr(tool, 'inputSchema', {})
+                            if isinstance(input_schema, dict):
+                                # Ensure required fields are present
+                                if 'type' not in input_schema:
+                                    input_schema['type'] = 'object'
+                                if 'properties' not in input_schema:
+                                    input_schema['properties'] = {}
+                                    
                             tool_data = {
                                 "name": getattr(tool, 'name', ''),
                                 "description": getattr(tool, 'description', ''),
-                                "inputSchema": getattr(tool, 'inputSchema', {})
+                                "inputSchema": input_schema
                             }
+                        
+                        # Validate and clean the schema
+                        if 'inputSchema' in tool_data:
+                            schema = tool_data['inputSchema']
+                            # Ensure it's a valid JSON schema object
+                            if not isinstance(schema, dict):
+                                schema = {"type": "object", "properties": {}}
+                            if 'type' not in schema:
+                                schema['type'] = 'object'
+                            if schema['type'] == 'object' and 'properties' not in schema:
+                                schema['properties'] = {}
+                            tool_data['inputSchema'] = schema
+                            
                         tools_dict.append(tool_data)
                     except Exception as e:
                         # Skip problematic tools
@@ -505,18 +601,40 @@ async def auth_sse(request_body: dict, request: Request):
             # Handle different MCP methods
             elif method == "tools/list":
                 result = await server.handle_list_tools()
-                # Clean conversion of Tool objects
+                # Clean conversion of Tool objects with proper schema handling
                 tools_dict = []
                 for tool in result:
                     try:
                         if hasattr(tool, 'model_dump'):
                             tool_data = tool.model_dump()
                         else:
+                            # Ensure inputSchema is properly structured
+                            input_schema = getattr(tool, 'inputSchema', {})
+                            if isinstance(input_schema, dict):
+                                # Ensure required fields are present
+                                if 'type' not in input_schema:
+                                    input_schema['type'] = 'object'
+                                if 'properties' not in input_schema:
+                                    input_schema['properties'] = {}
+                                    
                             tool_data = {
                                 "name": getattr(tool, 'name', ''),
                                 "description": getattr(tool, 'description', ''),
-                                "inputSchema": getattr(tool, 'inputSchema', {})
+                                "inputSchema": input_schema
                             }
+                        
+                        # Validate and clean the schema
+                        if 'inputSchema' in tool_data:
+                            schema = tool_data['inputSchema']
+                            # Ensure it's a valid JSON schema object
+                            if not isinstance(schema, dict):
+                                schema = {"type": "object", "properties": {}}
+                            if 'type' not in schema:
+                                schema['type'] = 'object'
+                            if schema['type'] == 'object' and 'properties' not in schema:
+                                schema['properties'] = {}
+                            tool_data['inputSchema'] = schema
+                            
                         tools_dict.append(tool_data)
                     except Exception:
                         # Skip problematic tools
