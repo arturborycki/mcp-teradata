@@ -1,0 +1,28 @@
+@startuml
+actor User
+participant "CLI/stdio" as CLI
+participant "Server" as Server
+participant "Handler Functions" as Handlers
+participant "PROMPTS (prompt.py)" as PROMPTS
+participant "TDConn" as TDConn
+participant "Teradata DB" as DB
+
+User -> CLI: Start server (main)
+CLI -> Server: Initialize Server
+Server -> Handlers: Register handlers
+
+User -> CLI: Send request (e.g., Analyze_database)
+CLI -> Server: Receive request
+Server -> Handlers: Call handler (e.g., handle_get_prompt)
+Handlers -> PROMPTS: Retrieve prompt template by name
+PROMPTS --> Handlers: Return prompt string (with placeholders)
+Handlers -> Handlers: Fill in prompt arguments (e.g., {database}, {table})
+Handlers -> TDConn: Create cursor, execute SQL (based on prompt instructions)
+TDConn -> DB: Execute SQL query
+DB --> TDConn: Return results
+TDConn --> Handlers: Return cursor/results
+Handlers -> Server: Format response
+Server -> CLI: Send response
+CLI -> User: Display results
+
+@enduml

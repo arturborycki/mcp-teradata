@@ -1,0 +1,52 @@
+# Python bytecode
+*.pyc
+__pycache__/
+
+# Virtual environments
+venv/
+env/
+ENV/
+.venv/
+.pip/
+.python-version
+.env
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
+*.egg
+*.whl
+
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints/
+
+# pytest cache
+.pytest_cache/
+
+# mypy
+.mypy_cache/
+
+# coverage reports
+htmlcov/
+.coverage
+.coverage.*
+
+# pip logs
+pip-log.txt
+
+# Unit test / coverage reports
+.tox/
+nosetests.xml
+coverage.xml
+*.cover
+.hypothesis/
+
+# VS Code settings
+.vscode/
+
+# Mac OS
+.DS_Store
+
+# Windows
+Thumbs.db

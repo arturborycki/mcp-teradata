@@ -59,7 +59,9 @@ The server offers six core tools:
         "teradata-mcp"
       ],
       "env": {
-        "DATABASE_URI": "teradata://user:passwd@host"
+        "DATABASE_URI": "teradata://user:passwd@host",
+        "KEYCLOAK_SERVICE_URL": "https://KEYCLOAK_FQDN/realms/USER_REALM/.well-known/openid-configuration",
+        "KEYCLOAK_CLIENT_ID": "KEYCLOAK_CLIENT_ID"
       }
     }
   }
@@ -70,6 +72,12 @@ Make sure to edit docker-compose.yml and update environment variable
 ```
 docker compose build
 docker compose up
+```
+
+## Usage as API
+Make sure uvicorn and dependencies are installed, before running 
+```
+uv run uvicorn teradata_mcp.http_api:app --host 0.0.0.0 --port 9999 --log-level debug --env-file .env --reload
 ```
 
 ## Building

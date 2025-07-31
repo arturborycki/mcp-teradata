@@ -32,12 +32,15 @@ _db = ""
 def _init_db_from_env():
     global _tdconn, _db
     database_url = os.environ.get("DATABASE_URI")
+    keycloak_url = os.environ.get("KEYCLOAK_SERVICE_URL")
+    keycloak_client_id = os.environ.get("KEYCLOAK_CLIENT_ID")
+
     if database_url:
         parsed_url = urlparse(database_url)
         _db = parsed_url.path.lstrip('/')
         try:
-            _tdconn = TDConn(database_url)
-            logger.info("Successfully connected to database and initialized connection (HTTP mode)")
+            _tdconn = TDConn(database_url, keycloak_url, keycloak_client_id)
+            logger.info("Successfully connected to database and initialized connection")
         except Exception as e:
             logger.warning(f"Could not connect to database: {obfuscate_password(str(e))}")
             logger.warning("Database operations will fail until a valid connection is established.")

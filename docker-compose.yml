@@ -5,7 +5,9 @@ services:
     build: .
     container_name: mcp-teradata
     environment:
-      - DATABASE_URI=teradatasql://user:passwd@host/db
+      - DATABASE_URI=teradata://user:passwd@host/db
+      - KEYCLOAK_SERVICE_URL=https://KEYCLOAK_FQDN/realms/USER_REALM/.well-known/openid-configuration
+      - KEYCLOAK_CLIENT_ID=
     ports:
       - "8000:8000"
     restart: unless-stopped

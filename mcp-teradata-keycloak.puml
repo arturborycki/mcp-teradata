@@ -1,0 +1,37 @@
+@startuml
+actor User
+participant "CLI/stdio" as CLI
+participant "Server" as Server
+participant "Keycloak" as Keycloak
+participant "Handler Functions" as Handlers
+participant "PROMPTS (prompt.py)" as PROMPTS
+participant "TDConn" as TDConn
+participant "Teradata DB" as DB
+
+User -> CLI: Start server (main)
+CLI -> Server: Initialize Server
+Server -> Keycloak: Request authentication
+Keycloak -> User: Prompt for credentials
+User -> Keycloak: Submit credentials
+Keycloak -> Server: Return JWT token
+Server -> Keycloak: Authorize request
+Keycloak --> Server: Authorization result
+Server -> DB: Validate token
+DB --> Server: Token valid/invalid
+Server -> Handlers: Register handlers
+
+User -> CLI: Send request (e.g., Analyze_database)
+CLI -> Server: Receive request
+Server -> Handlers: Call handler (e.g., handle_get_prompt)
+Handlers -> PROMPTS: Retrieve prompt template by name
+PROMPTS --> Handlers: Return prompt string (with placeholders)
+Handlers -> Handlers: Fill in prompt arguments (e.g., {database}, {table})
+Handlers -> TDConn: Create DB Session, execute SQL (based on prompt instructions)
+TDConn -> DB: Execute SQL query (JWT-based authentication)
+DB --> TDConn: Return results
+TDConn --> Handlers: Return results, Disconnect Session
+Handlers -> Server: Format response
+Server -> CLI: Send response
+CLI -> User: Display results
+
+@enduml
