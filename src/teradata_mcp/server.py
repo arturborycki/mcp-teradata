@@ -19,6 +19,7 @@ mcp = FastMCP("teradata-mcp")
 logger = logging.getLogger(__name__)
 _tdconn = TDConn()
 
+ResponseType = List[types.TextContent | types.ImageContent | types.EmbeddedResource]
 
 # Global shutdown flag
 shutdown_event = asyncio.Event()
@@ -31,43 +32,55 @@ async def shutdown(sig: signal.Signals = None):
         logger.info("Shutting down server")
     shutdown_event.set()
 
-async def execute_query(query: str) -> List[Any]:
-    """Execute a SQL query and return results as a list """
+def format_text_response(text: Any) -> ResponseType:
+    """Format a text response."""
+    return [types.TextContent(type="text", text=str(text))]
+
+
+def format_error_response(error: str) -> ResponseType:
+    """Format an error response."""
+    return format_text_response(f"Error: {error}")
+
+async def execute_query(query: str) -> ResponseType:
+    """Execute a SQL query and return results as a table """
     logger.debug(f"Executing query: {query}")
     global _tdconn
     try:
         cur = _tdconn.cursor()
         rows = cur.execute(query)
         if rows is None:
-            return ["No results"]
-        return list([row for row in rows.fetchall()])
+            return format_text_response("No results")
+        return format_text_response(list([row for row in rows.fetchall()]))
     except Exception as e:
         logger.error(f"Error executing query: {e}")
-        raise ValueError(f"Error executing query: {str(e)}")
+        return format_error_response(str(e))
+    except Exception as e:
+        logger.error(f"Database error executing query: {e}")
+        raise
 
-async def list_databases() -> List[Any]:
+async def list_databases() -> ResponseType:
     """List all databases in the Teradata."""
     try:
         global _tdconn
         cur = _tdconn.cursor()
         rows = cur.execute("select DataBaseName, DECODE(DBKind, 'U', 'User', 'D','DataBase') as DBType , CommentString from dbc.DatabasesV dv where OwnerName <> 'PDCRADM'")
-        return list([row for row in rows.fetchall()])
+        return format_text_response(list([row for row in rows.fetchall()]))
     except Exception as e:
         logger.error(f"Error listing schemas: {e}")
-        raise ValueError(f"Error listing databases: {str(e)}")
+        return format_error_response(str(e))
 
-async def list_objects_in_db(db_name: str) -> List[Any]:
+async def list_objects_in_db(db_name: str) -> ResponseType:
     """List objects of in a database of the given name."""
     try:
         global _tdconn
         cur = _tdconn.cursor()
         rows = cur.execute("select TableName from dbc.TablesV tv where UPPER(tv.DatabaseName) = UPPER(?) and tv.TableKind in ('T','V','O');", [db_name])
-        return list([row for row in rows.fetchall()])
+        return format_text_response(list([row for row in rows.fetchall()]))
     except Exception as e:
-        logger.error(f"Error listing objects: {e}")
-        raise ValueError(f"Error listing objects: {str(e)}")
+        logger.error(f"Error listing schemas: {e}")
+        return format_error_response(str(e))
 
-async def get_object_details(db_name: str, obj_name: str) -> List[Any]:
+async def get_object_details(db_name: str, obj_name: str) -> ResponseType:
     """Get detailed information about a database tables."""
     if len(db_name) == 0:
         db_name = "%"
@@ -127,34 +140,36 @@ async def get_object_details(db_name: str, obj_name: str) -> List[Any]:
       from DBC.ColumnsVX where upper(tableName) like upper(?) and upper(DatabaseName) like upper(?)
             """
                            , [obj_name,db_name])
-        return list([row for row in rows.fetchall()])
+        return format_text_response(list([row for row in rows.fetchall()]))
     except Exception as e:
-        logger.error(f"Error getting object details: {e}")
-        raise ValueError(f"Error getting object details: {str(e)}")
+        logger.error(f"Error listing schemas: {e}")
+        return format_error_response(str(e))
 
-async def list_missing_val(table_name: str) -> List[Any]:
+
+async def list_missing_val(table_name: str) -> ResponseType:
     """List of columns with count of null values."""
     try:
         global _tdconn
         cur = _tdconn.cursor()
         rows = cur.execute(f"select ColumnName, NullCount, NullPercentage from TD_ColumnSummary ( on {table_name} as InputTable using TargetColumns ('[:]')) as dt ORDER BY NullCount desc")
-        return list([row for row in rows.fetchall()])
+        return format_text_response(list([row for row in rows.fetchall()]))
     except Exception as e:
-        logger.error(f"Error evaluating features: {e}")
-        raise ValueError(f"Error evaluating missing values: {str(e)}")
+        logger.error(f"Error listing schemas: {e}")
+        return format_error_response(str(e))
+
     
-async def list_negative_val(table_name: str) -> List[Any]:
+async def list_negative_val(table_name: str) -> ResponseType:
     """List of columns with count of negative values."""
     try:
         global _tdconn
         cur = _tdconn.cursor()
         rows = cur.execute(f"select ColumnName, NegativeCount from TD_ColumnSummary ( on {table_name} as InputTable using TargetColumns ('[:]')) as dt ORDER BY NegativeCount desc")
-        return list([row for row in rows.fetchall()])
+        return format_text_response(list([row for row in rows.fetchall()]))
     except Exception as e:
-        logger.error(f"Error evaluating features: {e}")
-        raise ValueError(f"Error evaluating negative values: {str(e)}")
+        logger.error(f"Error listing schemas: {e}")
+        return format_error_response(str(e))
 
-async def list_dist_cat(table_name: str, col_name: str = "") -> List[Any]:
+async def list_dist_cat(table_name: str, col_name: str = "") -> ResponseType:
     """List distinct categories in the column."""
     try:
         global _tdconn
@@ -162,21 +177,21 @@ async def list_dist_cat(table_name: str, col_name: str = "") -> List[Any]:
         if col_name == "":
             col_name = "[:]"
         rows = cur.execute(f"select * from TD_CategoricalSummary ( on {table_name} as InputTable using TargetColumns ('{col_name}')) as dt")
-        return list([row for row in rows.fetchall()])
+        return format_text_response(list([row for row in rows.fetchall()]))
     except Exception as e:
-        logger.error(f"Error evaluating features: {e}")
-        raise ValueError(f"Error evaluating distinct values: {str(e)}")
+        logger.error(f"Error listing schemas: {e}")
+        return format_error_response(str(e))
 
-async def stnd_dev(table_name: str, col_name: str) -> List[Any]:
+async def stnd_dev(table_name: str, col_name: str) -> ResponseType:
     """Display standard deviation for column."""
     try:
         global _tdconn
         cur = _tdconn.cursor()
         rows = cur.execute(f"select * from TD_UnivariateStatistics ( on {table_name} as InputTable using TargetColumns ('{col_name}') Stats('MEAN','STD')) as dt ORDER BY 1,2")
-        return list([row for row in rows.fetchall()])
+        return format_text_response(list([row for row in rows.fetchall()]))
     except Exception as e:
-        logger.error(f"Error evaluating features: {e}")
-        raise ValueError(f"Error calculating standard deviation: {str(e)}")
+        logger.error(f"Error listing schemas: {e}")
+        return format_error_response(str(e))
 
 async def prefetch_tables(db_name: str) -> dict:
     """Prefetch table and column information"""
@@ -272,42 +287,42 @@ def data_to_yaml(data: Any) -> str:
 # --- FastMCP Tool Definitions ---
 
 @mcp.tool()
-async def query(query: str) -> List[Any]:
-    """Executes a SQL query against the Teradata database"""
+async def query(query: str) -> ResponseType:
+    """Executes a SQL query against the Teradata database and display results as a table"""
     return await execute_query(query)
 
 @mcp.tool()
-async def list_db() -> List[Any]:
+async def list_db() -> ResponseType:
     """List all databases in the Teradata system"""
     return await list_databases()
 
 @mcp.tool()
-async def list_objects(db_name: str) -> List[Any]:
+async def list_objects(db_name: str) -> ResponseType:
     """List objects in a database"""
     return await list_objects_in_db(db_name)
 
 @mcp.tool()
-async def show_tables(db_name: str, obj_name: str = "") -> List[Any]:
+async def show_tables(db_name: str, obj_name: str = "") -> ResponseType:
     """Show detailed information about a database tables"""
     return await get_object_details(db_name, obj_name)
 
 @mcp.tool()
-async def list_missing_values(table_name: str) -> List[Any]:
+async def list_missing_values(table_name: str) -> ResponseType:
     """What are the top features with missing values in a table"""
     return await list_missing_val(table_name)
 
 @mcp.tool()
-async def list_negative_values(table_name: str) -> List[Any]:
+async def list_negative_values(table_name: str) -> ResponseType:
     """How many features have negative values in a table"""
     return await list_negative_val(table_name)
 
 @mcp.tool()
-async def list_distinct_values(table_name: str) -> List[Any]:
+async def list_distinct_values(table_name: str) -> ResponseType:
     """How many distinct categories are there for column in the table"""
     return await list_dist_cat(table_name)
 
 @mcp.tool()
-async def standard_deviation(table_name: str, column_name: str) -> List[Any]:
+async def standard_deviation(table_name: str, column_name: str) -> ResponseType:
     """What is the mean and standard deviation for column in table?"""
     return await stnd_dev(table_name, column_name)
 
@@ -336,15 +351,15 @@ async def glm(database: str, table: str) -> str:
 @mcp.resource("teradata://table/{table_name}")
 async def get_table_resource(table_name: str) -> str:
     """Get table schema and information"""
-    global _db
-    tables_info = await prefetch_tables(_db)
+    global _tdconn
+    tables_info = await prefetch_tables(_tdconn)
     if isinstance(tables_info, dict) and table_name in tables_info:
         return data_to_yaml(tables_info[table_name])
     else:
         return f"Error: Table {table_name} not found or database error"
 
 async def main():
-    global _tdconn, _db
+    global _tdconn
     
     logger.info("Starting Teradata MCP Server")
     
