@@ -40,7 +40,8 @@ def _init_db_from_env():
             logger.warning(f"Could not connect to database: {obfuscate_password(str(e))}")
             logger.warning("Database operations will fail until a valid connection is established.")
 
-#_init_db_from_env()
+# Don't initialize at import time to avoid the RuntimeWarning
+# _init_db_from_env()
 
 def format_text_response(text: Any) -> ResponseType:
     """Format a text response."""
@@ -675,7 +676,7 @@ async def handle_tool_call(
 
 # --- CLI/stdio entrypoint ---
 async def main():
-    global _tdconn
+    global _tdconn, _db
     
     logger.info("Starting Teradata MCP Server")
     
@@ -701,6 +702,7 @@ async def main():
     args = parser.parse_args()
     database_url = os.environ.get("DATABASE_URI", args.database_url)
     
+    # Initialize database connection only when server starts (fixes RuntimeWarning)
     if database_url:
         parsed_url = urlparse(database_url)
         _db = parsed_url.path.lstrip('/') 
