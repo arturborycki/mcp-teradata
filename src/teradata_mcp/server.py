@@ -352,6 +352,9 @@ async def glm(database: str, table: str) -> str:
 async def get_table_resource(table_name: str) -> str:
     """Get table schema and information"""
     global _tdconn
+
+    if _tdconn is None:
+        return "Error: Database connection not initialized"
     tables_info = await prefetch_tables(_tdconn)
     if isinstance(tables_info, dict) and table_name in tables_info:
         return data_to_yaml(tables_info[table_name])
