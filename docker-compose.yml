@@ -5,7 +5,17 @@ services:
     build: .
     container_name: mcp-teradata
     environment:
+      # Database connection
       - DATABASE_URI=teradatasql://user:passwd@host/db
+      
+      # MCP Transport configuration
+      # Options: stdio, http, sse, streamable-http
+      - MCP_TRANSPORT=sse
+      - MCP_HOST=0.0.0.0
+      - MCP_PORT=8000
+      - MCP_PATH=/mcp/  # For streamable-http transport
+      
+      # Authentication (optional)
       - KEYCLOAK_ENABLED=true
       - KEYCLOAK_SERVER_URL=http://your-keycloak:8080
       - KEYCLOAK_REALM_NAME=mcp-realm

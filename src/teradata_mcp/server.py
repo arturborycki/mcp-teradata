@@ -16,9 +16,7 @@ import io
 from contextlib import redirect_stdout
 import mcp.server.stdio
 import mcp.types as types
-from mcp.server import NotificationOptions, Server
-from mcp.server.models import InitializationOptions
-from mcp.server.stdio import stdio_server
+import mcp
 from .tdsql import obfuscate_password
 from .tdsql import TDConn
 from .prompt import PROMPTS
@@ -42,16 +40,27 @@ def _init_db_from_env():
             logger.warning(f"Could not connect to database: {obfuscate_password(str(e))}")
             logger.warning("Database operations will fail until a valid connection is established.")
 
-_init_db_from_env()
+#_init_db_from_env()
 
 def format_text_response(text: Any) -> ResponseType:
     """Format a text response."""
     return [types.TextContent(type="text", text=str(text))]
 
-
 def format_error_response(error: str) -> ResponseType:
     """Format an error response."""
     return format_text_response(f"Error: {error}")
+
+# Global shutdown flag
+shutdown_event = asyncio.Event()
+
+async def shutdown(sig: signal.Signals = None):
+    """Graceful shutdown handler"""
+    if sig:
+        logger.info(f"Received shutdown signal: {sig.name}")
+    else:
+        logger.info("Shutting down server")
+    shutdown_event.set()
+
 logger = logging.getLogger("teradata_mcp")
 
 async def execute_query(query: str) -> ResponseType:
@@ -666,74 +675,71 @@ async def handle_tool_call(
 
 # --- CLI/stdio entrypoint ---
 async def main():
+    global _tdconn
+    
     logger.info("Starting Teradata MCP Server")
-    server = Server("teradata-mcp")
-    logger.info("Registering handlers")
+    
+    # Get transport type from environment
+    mcp_transport = os.getenv("MCP_TRANSPORT", "stdio").lower()
+    logger.info(f"MCP_TRANSPORT: {mcp_transport}")
+
+    # Set up proper shutdown handling
+    try:
+        loop = asyncio.get_running_loop()
+        signals = (signal.SIGTERM, signal.SIGINT)
+        for s in signals:
+            logger.info(f"Registering signal handler for {s.name}")
+            loop.add_signal_handler(s, lambda s=s: asyncio.create_task(shutdown(s)))
+    except NotImplementedError:
+        # Windows doesn't support signals properly
+        logger.warning("Signal handling not supported on Windows")
+        pass
+    
+    # Parse command line arguments
     parser = argparse.ArgumentParser(description="Teradata MCP Server")
     parser.add_argument("database_url", help="Database connection URL", nargs="?")
     args = parser.parse_args()
     database_url = os.environ.get("DATABASE_URI", args.database_url)
-    parsed_url = urlparse(database_url)
-    global _db
-    _db = parsed_url.path.lstrip('/') 
-    if not database_url:
-        raise ValueError(
-            "Error: No database URL provided. Please specify via 'DATABASE_URI' environment variable or command-line argument.",
-        )
-        global _tdconn
-    try:
-        _tdconn = TDConn(database_url)
-        logger.info("Successfully connected to database and initialized connection")
-    except Exception as e:
-        logger.warning(
-            f"Could not connect to database: {obfuscate_password(str(e))}",
-        )
-        logger.warning(
-            "The MCP server will start but database operations will fail until a valid connection is established.",
-        )
+    
+    if database_url:
+        parsed_url = urlparse(database_url)
+        _db = parsed_url.path.lstrip('/') 
+        try:
+            _tdconn = TDConn(database_url)
+            logger.info("Successfully connected to database and initialized connection")
+        except Exception as e:
+            logger.warning(
+                f"Could not connect to database: {obfuscate_password(str(e))}",
+            )
+            logger.warning(
+                "The MCP server will start but database operations will fail until a valid connection is established.",
+            )
+    else:
+        logger.warning("No database URL provided. Database operations will fail.")
 
-    logger.info("Registering handlers")
-
-    # Register handlers with decorators (inside main)
-    @server.list_prompts()
-    async def _handle_list_prompts():
-        return await handle_list_prompts()
-
-    @server.get_prompt()
-    async def _handle_get_prompt(name: str, arguments: dict[str, str] | None):
-        return await handle_get_prompt(name, arguments)
-
-    @server.list_resources()
-    async def _handle_list_resources():
-        return await handle_list_resources()
-
-    @server.read_resource()
-    async def _handle_read_resource(uri: AnyUrl):
-        return await handle_read_resource(uri)
-
-    @server.list_tools()
-    async def _handle_list_tools():
-        return await handle_list_tools()
-
-    @server.call_tool()
-    async def _handle_tool_call(name: str, arguments: dict | None):
-        return await handle_tool_call(name, arguments)
-
-    # --- stdio server code ---
-    async with stdio_server() as (read_stream, write_stream):
-        logger.info("Server running with stdio transport")
-        await server.run(
-            read_stream,
-            write_stream,
-            InitializationOptions(
-                server_name="teradata-mcp",
-                server_version="0.1.0",
-                capabilities=server.get_capabilities(
-                    notification_options=NotificationOptions(),
-                    experimental_capabilities={},
-                ),
-            ),
-        )
+    # Start the appropriate transport
+    if mcp_transport == "sse":
+        # SSE transport (Server-Sent Events)
+        mcp.settings.host = os.getenv("MCP_HOST", "0.0.0.0")
+        mcp.settings.port = int(os.getenv("MCP_PORT", "8000"))
+        logger.info(f"Starting MCP server on {mcp.settings.host}:{mcp.settings.port}")
+        await mcp.run_sse_async()
+            
+    elif mcp_transport == "streamable-http":
+        # Streamable HTTP transport
+        mcp.settings.host = os.getenv("MCP_HOST", "0.0.0.0")
+        mcp.settings.port = int(os.getenv("MCP_PORT", "8000"))
+        mcp.settings.streamable_http_path = os.getenv("MCP_PATH", "/mcp/")
+        logger.info(f"Starting MCP server on {mcp.settings.host}:{mcp.settings.port} with path {mcp.settings.streamable_http_path}")
+        await mcp.run_streamable_http_async()
+        
+    # Default to stdio transport
+    elif mcp_transport == "stdio":
+        logger.info("Starting MCP server on stdin/stdout")
+        await mcp.run_stdio_async()
+    else:
+        logger.error(f"Unknown transport: {mcp_transport}")
+        raise ValueError(f"Unsupported transport: {mcp_transport}")
 
 if __name__ == "__main__":
     asyncio.run(main())
