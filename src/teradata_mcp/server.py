@@ -3,53 +3,22 @@ import asyncio
 import logging
 import os
 import signal
-import re
-import teradatasql
 import yaml
-import asyncio
 from urllib.parse import urlparse
-from pydantic import AnyUrl
-from typing import Literal
-from typing import Any
-from typing import List
-import io
-from contextlib import redirect_stdout
-import mcp.server.stdio
+from typing import Any, List
 import mcp.types as types
-import mcp
-from .tdsql import obfuscate_password
-from .tdsql import TDConn
+from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp.prompts.base import UserMessage, TextContent
+
+from .tdsql import obfuscate_password, TDConn
 from .prompt import PROMPTS
 
+# Initialize FastMCP
+mcp = FastMCP("teradata-mcp")
 
 logger = logging.getLogger(__name__)
-ResponseType = List[types.TextContent | types.ImageContent | types.EmbeddedResource]
 _tdconn = TDConn()
-_db = ""
 
-def _init_db_from_env():
-    global _tdconn, _db
-    database_url = os.environ.get("DATABASE_URI")
-    if database_url:
-        parsed_url = urlparse(database_url)
-        _db = parsed_url.path.lstrip('/')
-        try:
-            _tdconn = TDConn(database_url)
-            logger.info("Successfully connected to database and initialized connection (HTTP mode)")
-        except Exception as e:
-            logger.warning(f"Could not connect to database: {obfuscate_password(str(e))}")
-            logger.warning("Database operations will fail until a valid connection is established.")
-
-# Don't initialize at import time to avoid the RuntimeWarning
-# _init_db_from_env()
-
-def format_text_response(text: Any) -> ResponseType:
-    """Format a text response."""
-    return [types.TextContent(type="text", text=str(text))]
-
-def format_error_response(error: str) -> ResponseType:
-    """Format an error response."""
-    return format_text_response(f"Error: {error}")
 
 # Global shutdown flag
 shutdown_event = asyncio.Event()
@@ -62,9 +31,7 @@ async def shutdown(sig: signal.Signals = None):
         logger.info("Shutting down server")
     shutdown_event.set()
 
-logger = logging.getLogger("teradata_mcp")
-
-async def execute_query(query: str) -> ResponseType:
+async def execute_query(query: str) -> List[Any]:
     """Execute a SQL query and return results as a list """
     logger.debug(f"Executing query: {query}")
     global _tdconn
@@ -72,39 +39,35 @@ async def execute_query(query: str) -> ResponseType:
         cur = _tdconn.cursor()
         rows = cur.execute(query)
         if rows is None:
-            return format_text_response("No results")
-        return format_text_response(list([row for row in rows.fetchall()]))
+            return ["No results"]
+        return list([row for row in rows.fetchall()])
     except Exception as e:
         logger.error(f"Error executing query: {e}")
-        return format_error_response(str(e))
-    except Exception as e:
-        logger.error(f"Database error executing query: {e}")
-        raise
+        raise ValueError(f"Error executing query: {str(e)}")
 
-
-async def list_db() -> ResponseType:
+async def list_databases() -> List[Any]:
     """List all databases in the Teradata."""
     try:
         global _tdconn
         cur = _tdconn.cursor()
         rows = cur.execute("select DataBaseName, DECODE(DBKind, 'U', 'User', 'D','DataBase') as DBType , CommentString from dbc.DatabasesV dv where OwnerName <> 'PDCRADM'")
-        return format_text_response(list([row for row in rows.fetchall()]))
+        return list([row for row in rows.fetchall()])
     except Exception as e:
         logger.error(f"Error listing schemas: {e}")
-        return format_error_response(str(e))
+        raise ValueError(f"Error listing databases: {str(e)}")
 
-async def list_objects(db_name: str) -> ResponseType:
+async def list_objects_in_db(db_name: str) -> List[Any]:
     """List objects of in a database of the given name."""
     try:
         global _tdconn
         cur = _tdconn.cursor()
         rows = cur.execute("select TableName from dbc.TablesV tv where UPPER(tv.DatabaseName) = UPPER(?) and tv.TableKind in ('T','V','O');", [db_name])
-        return format_text_response(list([row for row in rows.fetchall()]))
+        return list([row for row in rows.fetchall()])
     except Exception as e:
-        logger.error(f"Error listing schemas: {e}")
-        return format_error_response(str(e))
+        logger.error(f"Error listing objects: {e}")
+        raise ValueError(f"Error listing objects: {str(e)}")
 
-async def get_object_details(db_name: str, obj_name: str) -> ResponseType:
+async def get_object_details(db_name: str, obj_name: str) -> List[Any]:
     """Get detailed information about a database tables."""
     if len(db_name) == 0:
         db_name = "%"
@@ -164,34 +127,34 @@ async def get_object_details(db_name: str, obj_name: str) -> ResponseType:
       from DBC.ColumnsVX where upper(tableName) like upper(?) and upper(DatabaseName) like upper(?)
             """
                            , [obj_name,db_name])
-        return format_text_response(list([row for row in rows.fetchall()]))
+        return list([row for row in rows.fetchall()])
     except Exception as e:
-        logger.error(f"Error listing schemas: {e}")
-        return format_error_response(str(e))
+        logger.error(f"Error getting object details: {e}")
+        raise ValueError(f"Error getting object details: {str(e)}")
 
-async def list_missing_val(table_name: str) -> ResponseType:
+async def list_missing_val(table_name: str) -> List[Any]:
     """List of columns with count of null values."""
     try:
         global _tdconn
         cur = _tdconn.cursor()
         rows = cur.execute(f"select ColumnName, NullCount, NullPercentage from TD_ColumnSummary ( on {table_name} as InputTable using TargetColumns ('[:]')) as dt ORDER BY NullCount desc")
-        return format_text_response(list([row for row in rows.fetchall()]))
+        return list([row for row in rows.fetchall()])
     except Exception as e:
         logger.error(f"Error evaluating features: {e}")
-        return format_error_response(str(e))
+        raise ValueError(f"Error evaluating missing values: {str(e)}")
     
-async def list_negative_val(table_name: str) -> ResponseType:
+async def list_negative_val(table_name: str) -> List[Any]:
     """List of columns with count of negative values."""
     try:
         global _tdconn
         cur = _tdconn.cursor()
         rows = cur.execute(f"select ColumnName, NegativeCount from TD_ColumnSummary ( on {table_name} as InputTable using TargetColumns ('[:]')) as dt ORDER BY NegativeCount desc")
-        return format_text_response(list([row for row in rows.fetchall()]))
+        return list([row for row in rows.fetchall()])
     except Exception as e:
         logger.error(f"Error evaluating features: {e}")
-        return format_error_response(str(e))
+        raise ValueError(f"Error evaluating negative values: {str(e)}")
 
-async def list_dist_cat(table_name: str, col_name: str) -> ResponseType:
+async def list_dist_cat(table_name: str, col_name: str = "") -> List[Any]:
     """List distinct categories in the column."""
     try:
         global _tdconn
@@ -199,23 +162,23 @@ async def list_dist_cat(table_name: str, col_name: str) -> ResponseType:
         if col_name == "":
             col_name = "[:]"
         rows = cur.execute(f"select * from TD_CategoricalSummary ( on {table_name} as InputTable using TargetColumns ('{col_name}')) as dt")
-        return format_text_response(list([row for row in rows.fetchall()]))
+        return list([row for row in rows.fetchall()])
     except Exception as e:
         logger.error(f"Error evaluating features: {e}")
-        return format_error_response(str(e))
+        raise ValueError(f"Error evaluating distinct values: {str(e)}")
 
-async def stnd_dev(table_name: str, col_name: str) -> ResponseType:
+async def stnd_dev(table_name: str, col_name: str) -> List[Any]:
     """Display standard deviation for column."""
     try:
         global _tdconn
         cur = _tdconn.cursor()
         rows = cur.execute(f"select * from TD_UnivariateStatistics ( on {table_name} as InputTable using TargetColumns ('{col_name}') Stats('MEAN','STD')) as dt ORDER BY 1,2")
-        return format_text_response(list([row for row in rows.fetchall()]))
+        return list([row for row in rows.fetchall()])
     except Exception as e:
         logger.error(f"Error evaluating features: {e}")
-        return format_error_response(str(e))
+        raise ValueError(f"Error calculating standard deviation: {str(e)}")
 
-async def prefetch_tables( db_name: str) -> dict:
+async def prefetch_tables(db_name: str) -> dict:
     """Prefetch table and column information"""
     try:
         logger.info("Prefetching table descriptions")
@@ -306,375 +269,80 @@ async def prefetch_tables( db_name: str) -> dict:
 def data_to_yaml(data: Any) -> str:
     return yaml.dump(data, indent=2, sort_keys=False)
 
+# --- FastMCP Tool Definitions ---
 
-# --- Handler function definitions (NO decorators here!) ---
+@mcp.tool()
+async def query(query: str) -> List[Any]:
+    """Executes a SQL query against the Teradata database"""
+    return await execute_query(query)
 
-async def handle_list_prompts() -> list[types.Prompt]:
-    logger.debug("Handling list_prompts request")
-    return [
-        types.Prompt(
-            name="Analyze_database",
-            description="A prompt demonstrate how to analyze objects in Teradata database",
-            arguments=[
-                types.PromptArgument(
-                    name="database",
-                    description="Database name to analyze",
-                    required=True,
-                )
-            ],
-        ),
-        types.Prompt(
-            name="Analyze_table",
-            description="A prompt demonstrate how to analyze objects in Teradata database",
-            arguments=[
-                types.PromptArgument(
-                    name="database",
-                    description="Database name to analyze",
-                    required=True,
-                ),
-                types.PromptArgument(
-                    name="table",
-                    description="table name to analyze",
-                    required=True,
-                )
-            ],
+@mcp.tool()
+async def list_db() -> List[Any]:
+    """List all databases in the Teradata system"""
+    return await list_databases()
 
-        ),
-        types.Prompt(
-            name="glm",
-            description="A prompt demonstrate how to train model with GLM in Teradata database",
-            arguments=[
-                types.PromptArgument(
-                    name="database",
-                    description="Database name to analyze",
-                    required=True,
-                ),
-                types.PromptArgument(
-                    name="table",
-                    description="table name to analyze",
-                    required=True,
-                )
-            ],
+@mcp.tool()
+async def list_objects(db_name: str) -> List[Any]:
+    """List objects in a database"""
+    return await list_objects_in_db(db_name)
 
-        )
-    ]
+@mcp.tool()
+async def show_tables(db_name: str, obj_name: str = "") -> List[Any]:
+    """Show detailed information about a database tables"""
+    return await get_object_details(db_name, obj_name)
 
+@mcp.tool()
+async def list_missing_values(table_name: str) -> List[Any]:
+    """What are the top features with missing values in a table"""
+    return await list_missing_val(table_name)
 
-async def handle_get_prompt(name: str, arguments: dict[str, str] | None) -> types.GetPromptResult:
-    """Generate a prompt based on the requested type"""
-    # Simple argument handling
-    if arguments is None:
-        arguments = {}
-        
-    if name == "Analyze_database":
-        database = arguments.get("database", "datbase name")
-        prompt_text = PROMPTS["Analyze_database"].format( database=database)
-        return types.GetPromptResult(
-            description=f"Analyze database focus on {database}",
-            messages=[
-                types.PromptMessage(
-                    role="assistant", 
-                    content=types.TextContent(
-                        type="text",
-                        text="I am Database expert specializing in performing database tasks for the user."
-                    )
-                ),
-                types.PromptMessage(
-                    role="user", 
-                    content=types.TextContent(
-                        type="text",
-                        text=prompt_text
-                    )
-                )
-            ]
-        )
-    
-    elif name == "Analyze_table":
-        # Get info_type with a fallback default
-        database = arguments.get("database", "database name")
-        table = arguments.get("table", "table name")
-        prompt_text = PROMPTS["Analyze_database"].format(table=table, database=database)
-        return types.GetPromptResult(
-            description=f"Extracting details on {table} from database {database}",
-            messages=[
-                types.PromptMessage(
-                    role="assistant", 
-                    content=types.TextContent(
-                        type="text",
-                        text="I am database expert analyzing your database."
-                    )
-                ),
-                types.PromptMessage(
-                    role="user", 
-                    content=types.TextContent(
-                        type="text",
-                        text=prompt_text
-                    )
-                )
-            ]
-        )
-    elif name == "glm":
-        # Get info_type with a fallback default
-        database = arguments.get("database", "database name")
-        table = arguments.get("table", "table name")
-        prompt_text = PROMPTS["glm"].format(table=table, database=database)
-        return types.GetPromptResult(
-            description=f"Extracting details on {table} from database {database}",
-            messages=[
-                types.PromptMessage(
-                    role="assistant", 
-                    content=types.TextContent(
-                        type="text",
-                        text="I am database expert analyzing your database."
-                    )
-                ),
-                types.PromptMessage(
-                    role="user", 
-                    content=types.TextContent(
-                        type="text",
-                        text=prompt_text
-                    )
-                )
-            ]
-        )
-   
-    else:
-        raise ValueError(f"Unknown prompt: {name}")
+@mcp.tool()
+async def list_negative_values(table_name: str) -> List[Any]:
+    """How many features have negative values in a table"""
+    return await list_negative_val(table_name)
 
+@mcp.tool()
+async def list_distinct_values(table_name: str) -> List[Any]:
+    """How many distinct categories are there for column in the table"""
+    return await list_dist_cat(table_name)
 
-async def handle_list_resources() -> list[types.Resource]:
+@mcp.tool()
+async def standard_deviation(table_name: str, column_name: str) -> List[Any]:
+    """What is the mean and standard deviation for column in table?"""
+    return await stnd_dev(table_name, column_name)
+
+# --- FastMCP Prompt Definitions ---
+
+@mcp.prompt()
+async def Analyze_database(database: str) -> str:
+    """A prompt demonstrate how to analyze objects in Teradata database"""
+    prompt_text = PROMPTS["Analyze_database"].format(database=database)
+    return f"I am Database expert specializing in performing database tasks for the user.\n\n{prompt_text}"
+
+@mcp.prompt()
+async def Analyze_table(database: str, table: str) -> str:
+    """A prompt demonstrate how to analyze objects in Teradata database"""
+    prompt_text = PROMPTS["Analyze_database"].format(table=table, database=database)
+    return f"I am database expert analyzing your database.\n\n{prompt_text}"
+
+@mcp.prompt()
+async def glm(database: str, table: str) -> str:
+    """A prompt demonstrate how to train model with GLM in Teradata database"""
+    prompt_text = PROMPTS["glm"].format(table=table, database=database)
+    return f"I am database expert analyzing your database.\n\n{prompt_text}"
+
+# --- FastMCP Resource Definitions ---
+
+@mcp.resource("teradata://table/{table_name}")
+async def get_table_resource(table_name: str) -> str:
+    """Get table schema and information"""
     global _db
-    tables_info = (await prefetch_tables(_db))
-    # If prefetch_tables returned an error string, handle it gracefully
-    if not isinstance(tables_info, dict):
-        # Return a single resource with the error message
-        return [
-            types.Resource(
-                uri=AnyUrl("teradata://error"),
-                name="Error",
-                description=str(tables_info),
-                mimeType="text/plain",
-            )
-        ]
-    table_resources = [
-        types.Resource(
-            uri=AnyUrl(f"teradata://table/{table_name}"),
-            name=f"{table_name} table",
-            description=f"{tables_info[table_name]['description']}" if tables_info[table_name]['description'] else f"Description of the {table_name} table",
-            mimeType="text/plain",
-        )
-        for table_name in tables_info
-    ]
-    return table_resources
-
-
-async def handle_read_resource(uri: AnyUrl) -> str:
-    global _db
-    tables_info = (await prefetch_tables(_db)) 
-    if str(uri).startswith("teradata://table"):
-        table_name = str(uri).split("/")[-1]
-        if table_name in tables_info:
-            return data_to_yaml(tables_info[table_name])
-        else:
-            raise ValueError(f"Unknown table: {table_name}")
+    tables_info = await prefetch_tables(_db)
+    if isinstance(tables_info, dict) and table_name in tables_info:
+        return data_to_yaml(tables_info[table_name])
     else:
-        raise ValueError(f"Unknown resource: {uri}")
+        return f"Error: Table {table_name} not found or database error"
 
-
-async def handle_list_tools() -> list[types.Tool]:
-    """
-    List available tools.
-    Each tool specifies its arguments using JSON Schema validation.
-    """
-    logger.info("Listing tools")
-    return [
-        types.Tool(
-            name="query",
-            description="Executes a SQL query against the Teradata database",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "query": {
-                        "type": "string",
-                        "description": "SQL query to execute that is a dialect of Teradata SQL",
-                    },
-                },
-                "required": ["query"],
-            },
-        ),
-        types.Tool(
-            name="list_db",
-            description="List all databases in the Teradata system",
-            inputSchema={
-                "type": "object",
-                "properties": {},
-            },
-        ),
-        types.Tool(
-            name="list_objects",
-            description="List objects in a database",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "db_name": {
-                        "type": "string",
-                        "description": "Database name to list",
-                    },
-                },
-                "required": ["db_name"],
-            },
-        ),
-        types.Tool(
-            name="show_tables",
-            description="Show detailed information about a database tables",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "db_name": {
-                        "type": "string",
-                        "description": "Database name to list",
-                    },                
-                    "obj_name": {
-                        "type": "string",
-                        "description": "Table, object name to list",
-                    },
-                },
-                "required": ["db_name"],
-            },
-        ),
-        types.Tool(
-            name="list_missing_values",
-            description="What are the top features with missing values in a table",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "table_name": {
-                        "type": "string",
-                        "description": "Table name to list",
-                    },
-                },
-                "required": ["table_name"],
-            },
-        ),
-        types.Tool(
-            name="list_negative_values",
-            description="How many features have negative values in a table",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "table_name": {
-                        "type": "string",
-                        "description": "Table name to list",
-                    },
-                },
-                "required": ["table_name"],
-            },
-        ),
-        types.Tool(
-            name="list_distinct_values",
-            description="How many distinct categories are there for column in the table",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "table_name": {
-                        "type": "string",
-                        "description": "Table name to list",
-                    },
-                },
-                "required": ["table_name"],
-            },
-        ),
-        types.Tool(
-            name="standard_deviation",
-            description="What is the mean and standard deviation for column in table?",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "table_name": {
-                        "type": "string",
-                        "description": "Table name to list",
-                    },
-                    "column_name": {
-                        "type": "string",
-                        "description": "Column name to list",
-                    },
-                },
-                "required": ["table_name", "column_name"],
-            },
-        ),
-    ]
-
-
-async def handle_tool_call(
-    name: str, arguments: dict | None
-) -> list[types.TextContent | types.ImageContent | types.EmbeddedResource]:
-    """
-    Handle tool execution requests.
-    Tools can modify server state and notify clients of changes.
-    """
-    logger.info(f"Calling tool: {name}::{arguments}")
-    try:
-        if name == "query":
-            if arguments is None:
-                return [
-                    types.TextContent(type="text", text="Error: No query provided")
-                ]
-            tool_response = await execute_query(arguments["query"])
-            return tool_response
-        elif name == "list_db":
-            tool_response = await list_db()
-            return tool_response
-        elif name == "list_objects":
-            if arguments is None:
-                return [
-                    types.TextContent(type="text", text="Error: Database name provided")
-                ]
-            tool_response = await list_objects(arguments["db_name"])
-            return tool_response
-        elif name == "show_tables":
-            if arguments is None:
-                return [
-                    types.TextContent(type="text", text="Error: Database or table name not provided")
-                ]
-            tool_response = await get_object_details(arguments["db_name"], arguments["obj_name"])
-            return tool_response
-        elif name == "list_missing_values":
-            if arguments is None:
-                return [
-                    types.TextContent(type="text", text="Error: Table name not provided")
-                ]
-            tool_response = await list_missing_val(arguments["table_name"])
-            return tool_response
-        elif name == "list_negative_values":
-            if arguments is None:
-                return [
-                    types.TextContent(type="text", text="Error: Table name not provided")
-                ]
-            tool_response = await list_negative_val(arguments["table_name"])
-            return tool_response
-        elif name == "list_distinct_values":
-            if arguments is None:
-                return [
-                    types.TextContent(type="text", text="Error: Table name not provided")
-                ]
-            tool_response = await list_dist_cat(arguments["table_name"])
-            return tool_response
-        elif name == "standard_deviation":
-            if arguments is None:
-                return [
-                    types.TextContent(type="text", text="Error: Table name or column name not provided")
-                ]
-            tool_response = await stnd_dev(arguments["table_name"], arguments["column_name"])
-            return tool_response                        
-
-        return [types.TextContent(type="text", text=f"Unsupported tool: {name}")]
-
-    except Exception as e:
-        logger.error(f"Error executing tool {name}: {e}")
-        raise ValueError(f"Error executing tool {name}: {str(e)}")
-
-
-# --- CLI/stdio entrypoint ---
 async def main():
     global _tdconn, _db
     
@@ -719,26 +387,21 @@ async def main():
     else:
         logger.warning("No database URL provided. Database operations will fail.")
 
-    # Start the appropriate transport
+    # Start FastMCP server with the specified transport
     if mcp_transport == "sse":
-        # SSE transport (Server-Sent Events)
-        mcp.settings.host = os.getenv("MCP_HOST", "0.0.0.0")
-        mcp.settings.port = int(os.getenv("MCP_PORT", "8000"))
+        mcp.settings.host = os.getenv("MCP_HOST")
+        mcp.settings.port = int(os.getenv("MCP_PORT"))
         logger.info(f"Starting MCP server on {mcp.settings.host}:{mcp.settings.port}")
         await mcp.run_sse_async()
-            
+    elif mcp_transport == "stdio":
+        logger.info("Starting FastMCP server with stdio transport")
+        await mcp.run_stdio_async()
     elif mcp_transport == "streamable-http":
-        # Streamable HTTP transport
-        mcp.settings.host = os.getenv("MCP_HOST", "0.0.0.0")
-        mcp.settings.port = int(os.getenv("MCP_PORT", "8000"))
+        mcp.settings.host = os.getenv("MCP_HOST")
+        mcp.settings.port = int(os.getenv("MCP_PORT"))
         mcp.settings.streamable_http_path = os.getenv("MCP_PATH", "/mcp/")
         logger.info(f"Starting MCP server on {mcp.settings.host}:{mcp.settings.port} with path {mcp.settings.streamable_http_path}")
         await mcp.run_streamable_http_async()
-        
-    # Default to stdio transport
-    elif mcp_transport == "stdio":
-        logger.info("Starting MCP server on stdin/stdout")
-        await mcp.run_stdio_async()
     else:
         logger.error(f"Unknown transport: {mcp_transport}")
         raise ValueError(f"Unsupported transport: {mcp_transport}")
