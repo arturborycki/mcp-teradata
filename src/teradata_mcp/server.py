@@ -789,7 +789,7 @@ async def main():
             # Import locally to access in function scope
             import uvicorn
             from starlette.applications import Starlette
-            from starlette.routing import Route
+            from starlette.routing import Mount, Route
             from starlette.responses import Response
             from contextlib import asynccontextmanager
         except ImportError:
@@ -855,54 +855,21 @@ async def main():
         async def lifespan(app):
             # Startup
             logger.info("Starting streamable HTTP session manager")
-            task = asyncio.create_task(session_manager.run())
-            try:
-                yield
-            finally:
-                # Shutdown
-                logger.info("Shutting down streamable HTTP session manager")
-                task.cancel()
+            async with session_manager.run():
+                logger.info("StreamableHTTP session manager started successfully")
                 try:
-                    await task
-                except asyncio.CancelledError:
-                    pass
+                    yield
+                finally:
+                    logger.info("Shutting down streamable HTTP session manager")
         
-        # Create handler that converts request to ASGI
-        async def streamable_http_handler(request):
-            """Handle HTTP request through StreamableHTTPSessionManager"""
-            scope = request.scope
-            receive = request.receive
-            
-            # Create a response sender
-            response_started = False
-            response_body = b""
-            status_code = 200
-            headers = []
-            
-            async def send(message):
-                nonlocal response_started, response_body, status_code, headers
-                if message["type"] == "http.response.start":
-                    response_started = True
-                    status_code = message["status"]
-                    headers = message.get("headers", [])
-                elif message["type"] == "http.response.body":
-                    body = message.get("body", b"")
-                    if body:
-                        response_body += body
-            
-            # Handle the request through session manager
+        # Create handler that handles HTTP requests through SessionManager
+        async def streamable_http_handler(scope, receive, send):
+            """ASGI handler for streamable HTTP requests"""
             await session_manager.handle_request(scope, receive, send)
-            
-            # Return response
-            return Response(
-                content=response_body,
-                status_code=status_code,
-                headers=dict(headers) if headers else None
-            )
         
         # Create Starlette app with MCP path and lifespan
         routes = [
-            Route(mcp_path, endpoint=streamable_http_handler, methods=["GET", "POST"])
+            Mount(mcp_path, app=streamable_http_handler)
         ]
         
         app = Starlette(routes=routes, lifespan=lifespan)
