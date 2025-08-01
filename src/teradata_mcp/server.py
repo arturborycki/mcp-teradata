@@ -791,6 +791,7 @@ async def main():
             from starlette.applications import Starlette
             from starlette.routing import Route
             from starlette.responses import Response
+            from contextlib import asynccontextmanager
         except ImportError:
             raise ImportError("Streamable HTTP transport requires starlette and uvicorn. Install with: pip install starlette uvicorn")
         
@@ -801,13 +802,29 @@ async def main():
         
         try:
             from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
+            streamable_http_available = True
         except ImportError:
-            logger.error("StreamableHTTPSessionManager not available in current MCP version")
-            logger.info("This implementation provides basic HTTP support - use SSE for full functionality")
-            
-            # Fallback to basic HTTP handling
+            logger.warning("StreamableHTTPSessionManager not available in current MCP version")
+            logger.info("Falling back to basic HTTP implementation - use SSE transport for full MCP functionality")
+            streamable_http_available = False
+        
+        if not streamable_http_available:
+            # Fallback to basic HTTP handling with proper MCP-like responses
             async def basic_http_handler(request):
-                return Response("Teradata MCP Server - Use SSE transport for full functionality", status_code=200)
+                if request.method == "GET":
+                    return Response(
+                        content='{"jsonrpc": "2.0", "result": {"name": "teradata-mcp", "version": "0.1.0", "capabilities": {}}}',
+                        media_type="application/json",
+                        status_code=200
+                    )
+                elif request.method == "POST":
+                    return Response(
+                        content='{"jsonrpc": "2.0", "error": {"code": -32601, "message": "Streamable HTTP not available - use SSE transport"}}',
+                        media_type="application/json", 
+                        status_code=200
+                    )
+                else:
+                    return Response("Method not allowed", status_code=405)
             
             app = Starlette(routes=[
                 Route(mcp_path, endpoint=basic_http_handler, methods=["GET", "POST"])
@@ -817,6 +834,7 @@ async def main():
             server_instance = uvicorn.Server(config)
             
             logger.info(f"Basic HTTP server starting on {host}:{port}{mcp_path}")
+            logger.info("Note: Use MCP_TRANSPORT=sse for full MCP functionality")
             await server_instance.serve()
             return
         
@@ -832,16 +850,62 @@ async def main():
             stateless=False,
         )
         
-        async def streamable_http_handler(scope, receive, send):
-            """ASGI handler for streamable HTTP"""
-            await session_manager.handle_request(scope, receive, send)
+        # Create a proper ASGI lifespan manager
+        @asynccontextmanager
+        async def lifespan(app):
+            # Startup
+            logger.info("Starting streamable HTTP session manager")
+            task = asyncio.create_task(session_manager.run())
+            try:
+                yield
+            finally:
+                # Shutdown
+                logger.info("Shutting down streamable HTTP session manager")
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
         
-        # Create Starlette app with MCP path
+        # Create handler that converts request to ASGI
+        async def streamable_http_handler(request):
+            """Handle HTTP request through StreamableHTTPSessionManager"""
+            scope = request.scope
+            receive = request.receive
+            
+            # Create a response sender
+            response_started = False
+            response_body = b""
+            status_code = 200
+            headers = []
+            
+            async def send(message):
+                nonlocal response_started, response_body, status_code, headers
+                if message["type"] == "http.response.start":
+                    response_started = True
+                    status_code = message["status"]
+                    headers = message.get("headers", [])
+                elif message["type"] == "http.response.body":
+                    body = message.get("body", b"")
+                    if body:
+                        response_body += body
+            
+            # Handle the request through session manager
+            await session_manager.handle_request(scope, receive, send)
+            
+            # Return response
+            return Response(
+                content=response_body,
+                status_code=status_code,
+                headers=dict(headers) if headers else None
+            )
+        
+        # Create Starlette app with MCP path and lifespan
         routes = [
             Route(mcp_path, endpoint=streamable_http_handler, methods=["GET", "POST"])
         ]
         
-        app = Starlette(routes=routes, lifespan=lambda app: session_manager.run())
+        app = Starlette(routes=routes, lifespan=lifespan)
         
         # Run with uvicorn
         config = uvicorn.Config(app, host=host, port=port, log_level="info")
