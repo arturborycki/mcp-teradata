@@ -27,4 +27,4 @@ ENV MCP_PORT=8000
 ENV MCP_PATH=/mcp/
 
 # Run your MCP server
-CMD ["uv", "run", "python", "-m", "teradata_mcp.server"]
+CMD ["uv", "run", "python", "-m", "teradata_mcp"]

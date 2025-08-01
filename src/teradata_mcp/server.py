@@ -272,6 +272,3 @@ async def main():
                 
     else:
         raise ValueError(f"Unsupported transport: {mcp_transport}. Supported: stdio, sse, streamable-http")
-
-if __name__ == "__main__":
-    asyncio.run(main())
