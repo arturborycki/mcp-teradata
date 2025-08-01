@@ -24,7 +24,7 @@ ENV UV_SYSTEM_PYTHON=1
 ENV MCP_TRANSPORT=streamable-http
 ENV MCP_HOST=0.0.0.0
 ENV MCP_PORT=8000
-ENV MCP_PATH=/mcp
+ENV MCP_PATH=/mcp/
 
 # Run your MCP server
 CMD ["uv", "run", "python", "-m", "teradata_mcp.server"]

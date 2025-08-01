@@ -8,7 +8,7 @@ services:
       - MCP_TRANSPORT=streamable-http
       - MCP_HOST=0.0.0.0
       - MCP_PORT=8000
-      - MCP_PATH=/mcp
+      - MCP_PATH=/mcp/
       - DATABASE_URI=teradatasql://user:passwd@host/db
     ports:
       - "8000:8000"

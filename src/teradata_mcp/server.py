@@ -798,7 +798,7 @@ async def main():
         # Create StreamableHTTP transport
         host = os.getenv("MCP_HOST", "0.0.0.0")
         port = int(os.getenv("MCP_PORT", "8000"))
-        mcp_path = os.getenv("MCP_PATH", "/mcp")
+        mcp_path = os.getenv("MCP_PATH", "/mcp/")
         
         try:
             from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
