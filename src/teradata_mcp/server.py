@@ -352,7 +352,8 @@ async def glm(database: str, table: str) -> str:
 async def get_table_resource(table_name: str) -> str:
     """Get table schema and information"""
     global _tdconn
-
+    # Set up database connection
+    await setup_database_connection()
     if _tdconn is None:
         return "Error: Database connection not initialized"
     tables_info = await prefetch_tables(_tdconn)
@@ -360,6 +361,26 @@ async def get_table_resource(table_name: str) -> str:
         return data_to_yaml(tables_info[table_name])
     else:
         return f"Error: Table {table_name} not found or database error"
+
+async def setup_database_connection():
+    """Set up the Teradata database connection."""
+    global _tdconn
+    parser = argparse.ArgumentParser(description="Teradata MCP Server")
+    parser.add_argument("database_url", help="Database connection URL", nargs="?")
+    args = parser.parse_args()
+    database_url = os.environ.get("DATABASE_URI", args.database_url)
+    
+    if database_url:
+        parsed_url = urlparse(database_url)
+        _db = parsed_url.path.lstrip('/') 
+
+        if _tdconn is None:
+            try:
+                _tdconn = TDConn(database_url)
+                logger.info("Database connection initialized successfully")
+            except Exception as e:
+                logger.error(f"Failed to initialize database connection: {e}")
+                raise
 
 async def main():
     global _tdconn
@@ -382,34 +403,14 @@ async def main():
         logger.warning("Signal handling not supported on Windows")
         pass
     
-    # Parse command line arguments
-    parser = argparse.ArgumentParser(description="Teradata MCP Server")
-    parser.add_argument("database_url", help="Database connection URL", nargs="?")
-    args = parser.parse_args()
-    database_url = os.environ.get("DATABASE_URI", args.database_url)
+    # Set up database connection
+    await setup_database_connection()
     
-    # Initialize database connection only when server starts (fixes RuntimeWarning)
-    if database_url:
-        parsed_url = urlparse(database_url)
-        _db = parsed_url.path.lstrip('/') 
-        try:
-            _tdconn = TDConn(database_url)
-            logger.info("Successfully connected to database and initialized connection")
-        except Exception as e:
-            logger.warning(
-                f"Could not connect to database: {obfuscate_password(str(e))}",
-            )
-            logger.warning(
-                "The MCP server will start but database operations will fail until a valid connection is established.",
-            )
-    else:
-        logger.warning("No database URL provided. Database operations will fail.")
-
     # Start FastMCP server with the specified transport
     if mcp_transport == "sse":
-        mcp.settings.host = os.getenv("MCP_HOST")
-        mcp.settings.port = int(os.getenv("MCP_PORT"))
-        logger.info(f"Starting MCP server on {mcp.settings.host}:{mcp.settings.port}")
+        mcp.settings.host = os.getenv("MCP_HOST", "0.0.0.0")
+        mcp.settings.port = int(os.getenv("MCP_PORT", "8000"))
+        logger.info(f"Starting MCP server with SSE transport on {mcp.settings.host}:{mcp.settings.port}")
         await mcp.run_sse_async()
     elif mcp_transport == "stdio":
         logger.info("Starting FastMCP server with stdio transport")
