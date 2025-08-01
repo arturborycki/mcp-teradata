@@ -3,46 +3,26 @@ import asyncio
 import logging
 import os
 import signal
-import re
-import teradatasql
 import yaml
-import asyncio
 from urllib.parse import urlparse
 from pydantic import AnyUrl
-from typing import Literal
-from typing import Any
-from typing import List
-import io
-from contextlib import redirect_stdout
-import mcp.server.stdio
+from typing import Any, List
+
 import mcp.types as types
 from mcp.server import NotificationOptions, Server
 from mcp.server.models import InitializationOptions
 from mcp.server.stdio import stdio_server
-from .tdsql import obfuscate_password
-from .tdsql import TDConn
+from mcp.server.sse import SseServerTransport
+
+from .tdsql import obfuscate_password, TDConn
 from .prompt import PROMPTS
 
 
 logger = logging.getLogger(__name__)
 ResponseType = List[types.TextContent | types.ImageContent | types.EmbeddedResource]
-_tdconn = TDConn()
+_tdconn = None
 _db = ""
 
-def _init_db_from_env():
-    global _tdconn, _db
-    database_url = os.environ.get("DATABASE_URI")
-    if database_url:
-        parsed_url = urlparse(database_url)
-        _db = parsed_url.path.lstrip('/')
-        try:
-            _tdconn = TDConn(database_url)
-            logger.info("Successfully connected to database and initialized connection (HTTP mode)")
-        except Exception as e:
-            logger.warning(f"Could not connect to database: {obfuscate_password(str(e))}")
-            logger.warning("Database operations will fail until a valid connection is established.")
-
-_init_db_from_env()
 
 def format_text_response(text: Any) -> ResponseType:
     """Format a text response."""
@@ -667,20 +647,38 @@ async def handle_tool_call(
 # --- CLI/stdio entrypoint ---
 async def main():
     logger.info("Starting Teradata MCP Server")
-    server = Server("teradata-mcp")
-    logger.info("Registering handlers")
+    
+    # Set up proper shutdown handling
+    try:
+        loop = asyncio.get_running_loop()
+        signals = (signal.SIGTERM, signal.SIGINT)
+        for s in signals:
+            logger.info(f"Registering signal handler for {s.name}")
+            loop.add_signal_handler(s, lambda s=s: logger.info(f"Received shutdown signal: {s.name}"))
+    except NotImplementedError:
+        # Windows doesn't support signals properly
+        logger.warning("Signal handling not supported on Windows")
+        pass
+    
+    # Get transport type from environment
+    mcp_transport = os.getenv("MCP_TRANSPORT", "stdio").lower()
+    logger.info(f"MCP_TRANSPORT: {mcp_transport}")
+    
+    # Parse command line arguments
     parser = argparse.ArgumentParser(description="Teradata MCP Server")
     parser.add_argument("database_url", help="Database connection URL", nargs="?")
     args = parser.parse_args()
     database_url = os.environ.get("DATABASE_URI", args.database_url)
-    parsed_url = urlparse(database_url)
-    global _db
-    _db = parsed_url.path.lstrip('/') 
+    
     if not database_url:
         raise ValueError(
             "Error: No database URL provided. Please specify via 'DATABASE_URI' environment variable or command-line argument.",
         )
-        global _tdconn
+    
+    # Initialize database connection
+    parsed_url = urlparse(database_url)
+    global _db, _tdconn
+    _db = parsed_url.path.lstrip('/') 
     try:
         _tdconn = TDConn(database_url)
         logger.info("Successfully connected to database and initialized connection")
@@ -692,9 +690,10 @@ async def main():
             "The MCP server will start but database operations will fail until a valid connection is established.",
         )
 
-    logger.info("Registering handlers")
-
-    # Register handlers with decorators (inside main)
+    # Create MCP server
+    server = Server("teradata-mcp")
+    
+    # Register handlers with decorators
     @server.list_prompts()
     async def _handle_list_prompts():
         return await handle_list_prompts()
@@ -719,21 +718,142 @@ async def main():
     async def _handle_tool_call(name: str, arguments: dict | None):
         return await handle_tool_call(name, arguments)
 
-    # --- stdio server code ---
-    async with stdio_server() as (read_stream, write_stream):
-        logger.info("Server running with stdio transport")
-        await server.run(
-            read_stream,
-            write_stream,
-            InitializationOptions(
-                server_name="teradata-mcp",
-                server_version="0.1.0",
-                capabilities=server.get_capabilities(
-                    notification_options=NotificationOptions(),
-                    experimental_capabilities={},
-                ),
-            ),
+    # Initialize server capabilities
+    init_options = InitializationOptions(
+        server_name="teradata-mcp",
+        server_version="0.1.0",
+        capabilities=server.get_capabilities(
+            notification_options=NotificationOptions(),
+            experimental_capabilities={},
+        ),
+    )
+
+    # Start server based on transport type
+    if mcp_transport == "stdio":
+        logger.info("Starting server with stdio transport")
+        async with stdio_server() as (read_stream, write_stream):
+            await server.run(read_stream, write_stream, init_options)
+            
+    elif mcp_transport == "sse":
+        logger.info("Starting server with SSE transport")
+        
+        try:
+            # Import locally to access in function scope
+            from starlette.applications import Starlette
+            from starlette.routing import Route, Mount
+            from starlette.responses import Response
+            import uvicorn
+        except ImportError:
+            raise ImportError("SSE transport requires starlette and uvicorn. Install with: pip install starlette uvicorn")
+        
+        # Create SSE transport
+        host = os.getenv("MCP_HOST", "0.0.0.0")
+        port = int(os.getenv("MCP_PORT", "8000"))
+        sse_path = os.getenv("MCP_PATH", "/sse")
+        message_path = "/messages/"
+        
+        sse_transport = SseServerTransport(message_path)
+        
+        async def handle_sse(request):
+            """Handle SSE GET requests"""
+            async with sse_transport.connect_sse(
+                request.scope, request.receive, request._send
+            ) as streams:
+                await server.run(
+                    streams[0], streams[1], init_options
+                )
+            return Response()
+        
+        # Create Starlette app with proper routing
+        routes = [
+            Route(sse_path, endpoint=handle_sse, methods=["GET"]),
+            Mount(message_path, app=sse_transport.handle_post_message),
+        ]
+        
+        app = Starlette(routes=routes)
+        
+        # Run with uvicorn
+        config = uvicorn.Config(app, host=host, port=port, log_level="info")
+        server_instance = uvicorn.Server(config)
+        
+        logger.info(f"SSE server starting on {host}:{port}")
+        logger.info(f"SSE endpoint: {host}:{port}{sse_path}")
+        logger.info(f"Message endpoint: {host}:{port}{message_path}")
+        
+        await server_instance.serve()
+            
+    elif mcp_transport == "streamable-http":
+        logger.info("Starting server with streamable-http transport")
+        
+        try:
+            # Import locally to access in function scope
+            import uvicorn
+            from starlette.applications import Starlette
+            from starlette.routing import Route
+            from starlette.responses import Response
+        except ImportError:
+            raise ImportError("Streamable HTTP transport requires starlette and uvicorn. Install with: pip install starlette uvicorn")
+        
+        # Create StreamableHTTP transport
+        host = os.getenv("MCP_HOST", "0.0.0.0")
+        port = int(os.getenv("MCP_PORT", "8000"))
+        mcp_path = os.getenv("MCP_PATH", "/mcp")
+        
+        try:
+            from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
+        except ImportError:
+            logger.error("StreamableHTTPSessionManager not available in current MCP version")
+            logger.info("This implementation provides basic HTTP support - use SSE for full functionality")
+            
+            # Fallback to basic HTTP handling
+            async def basic_http_handler(request):
+                return Response("Teradata MCP Server - Use SSE transport for full functionality", status_code=200)
+            
+            app = Starlette(routes=[
+                Route(mcp_path, endpoint=basic_http_handler, methods=["GET", "POST"])
+            ])
+            
+            config = uvicorn.Config(app, host=host, port=port, log_level="info")
+            server_instance = uvicorn.Server(config)
+            
+            logger.info(f"Basic HTTP server starting on {host}:{port}{mcp_path}")
+            await server_instance.serve()
+            return
+        
+        # Generate session ID for streamable HTTP
+        import uuid
+        session_id = str(uuid.uuid4())
+        
+        # Create session manager
+        session_manager = StreamableHTTPSessionManager(
+            app=server,
+            event_store=None,  # Could add event store for resumability
+            json_response=False,
+            stateless=False,
         )
+        
+        async def streamable_http_handler(scope, receive, send):
+            """ASGI handler for streamable HTTP"""
+            await session_manager.handle_request(scope, receive, send)
+        
+        # Create Starlette app with MCP path
+        routes = [
+            Route(mcp_path, endpoint=streamable_http_handler, methods=["GET", "POST"])
+        ]
+        
+        app = Starlette(routes=routes, lifespan=lambda app: session_manager.run())
+        
+        # Run with uvicorn
+        config = uvicorn.Config(app, host=host, port=port, log_level="info")
+        server_instance = uvicorn.Server(config)
+        
+        logger.info(f"Streamable HTTP server starting on {host}:{port}{mcp_path}")
+        logger.info(f"Session ID: {session_id}")
+        
+        await server_instance.serve()
+                
+    else:
+        raise ValueError(f"Unsupported transport: {mcp_transport}. Supported: stdio, sse, streamable-http")
 
 if __name__ == "__main__":
     asyncio.run(main())

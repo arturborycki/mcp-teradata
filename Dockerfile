@@ -21,6 +21,10 @@ EXPOSE 8000
 # Set environment variables
 ENV PYTHONPATH=/app/src
 ENV UV_SYSTEM_PYTHON=1
+ENV MCP_TRANSPORT=streamable-http
+ENV MCP_HOST=0.0.0.0
+ENV MCP_PORT=8000
+ENV MCP_PATH=/mcp
 
 # Run your MCP server
 CMD ["uv", "run", "uvicorn", "teradata_mcp.http_api:app", "--host", "0.0.0.0", "--port", "8000"]
