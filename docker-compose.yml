@@ -10,6 +10,15 @@ services:
       - MCP_PORT=8000
       - MCP_PATH=/mcp/
       - DATABASE_URI=teradatasql://user:passwd@host/db
+      # Keycloak Authentication
+      - KEYCLOAK_ENABLED=true
+      - KEYCLOAK_SERVER_URL=https://your-keycloak-server.com
+      - KEYCLOAK_REALM=mcp-realm
+      - KEYCLOAK_CLIENT_ID=teradata-mcp-client
+      - KEYCLOAK_CLIENT_SECRET=your-client-secret
+      - KEYCLOAK_VERIFY_SSL=true
+      - KEYCLOAK_REQUIRED_ROLES=mcp-user,data-analyst
+      - KEYCLOAK_REQUIRED_SCOPES=teradata:read,teradata:write
     ports:
       - "8000:8000"
     restart: unless-stopped

@@ -79,12 +79,12 @@ async def list_tables(db_name: str) -> ResponseType:
         return format_error_response(str(e))
 
 
-async def show_tables_details(db_name: str, obj_name: str) -> ResponseType:
+async def show_tables_details(db_name: str, table_name: str) -> ResponseType:
     """Get detailed information about a database table."""
     if len(db_name) == 0:
         db_name = "%"
-    if len(obj_name) == 0:
-        obj_name = "%"
+    if len(table_name) == 0:
+        table_name = "%"
     try:
         global _tdconn
         cur = _tdconn.cursor()
@@ -138,7 +138,7 @@ async def show_tables_details(db_name: str, obj_name: str) -> ResponseType:
           END as CType
       from DBC.ColumnsVX where upper(tableName) like upper(?) and upper(DatabaseName) like upper(?)
             """
-                           , [obj_name,db_name])
+                           , [table_name, db_name])
         return format_text_response(list([row for row in rows.fetchall()]))
     except Exception as e:
         logger.error(f"Error listing schemas: {e}")
@@ -251,9 +251,9 @@ async def handle_list_tools() -> list[types.Tool]:
                         "type": "string",
                         "description": "Database name to list",
                     },                
-                    "obj_name": {
+                    "table_name": {
                         "type": "string",
-                        "description": "Table, object name to list",
+                        "description": "Table name to list",
                     },
                 },
                 "required": ["db_name"],
@@ -353,7 +353,7 @@ async def handle_tool_call(
                 return [
                     types.TextContent(type="text", text="Error: Database or table name not provided")
                 ]
-            tool_response = await show_tables_details(arguments["db_name"], arguments["obj_name"])
+            tool_response = await show_tables_details(arguments["db_name"], arguments["table_name"])
             return tool_response
         elif name == "list_missing_values":
             if arguments is None:

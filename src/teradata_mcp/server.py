@@ -26,6 +26,8 @@ from .fnc_prompts import (
     handle_list_prompts,
     handle_get_prompt,
 )
+from .auth_config import KeycloakConfig
+from .auth_middleware import KeycloakAuthMiddleware
 
 logger = logging.getLogger(__name__)
 
@@ -76,6 +78,9 @@ async def main():
         logger.warning(
             "The MCP server will start but database operations will fail until a valid connection is established.",
         )
+
+    # Initialize Keycloak configuration
+    keycloak_config = KeycloakConfig()
 
     # Create MCP server
     server = Server("teradata-mcp")
@@ -158,6 +163,10 @@ async def main():
         ]
         
         app = Starlette(routes=routes)
+        
+        # Add authentication middleware to SSE app
+        if keycloak_config.enabled:
+            app.add_middleware(KeycloakAuthMiddleware, config=keycloak_config)
         
         # Run with uvicorn
         config = uvicorn.Config(app, host=host, port=port, log_level="info")
@@ -260,6 +269,10 @@ async def main():
         ]
         
         app = Starlette(routes=routes, lifespan=lifespan)
+        
+        # Add authentication middleware to streamable-http app
+        if keycloak_config.enabled:
+            app.add_middleware(KeycloakAuthMiddleware, config=keycloak_config)
         
         # Run with uvicorn
         config = uvicorn.Config(app, host=host, port=port, log_level="info")
