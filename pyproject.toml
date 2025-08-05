@@ -6,11 +6,16 @@ readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
     "fastapi>=0.115.12",
-    "mcp[cli]>=1.6.0",
+    "mcp[cli]>=1.12.3",
     "pydantic>=2.11.3",
     "pyyaml>=6.0.2",
     "teradatasql>=20.0.0.28",
     "uvicorn>=0.34.2",
+    "starlette>=0.37.0",
+    "python-jose[cryptography]>=3.3.0",  # JWT token validation
+    "python-multipart>=0.0.6",           # Form data parsing
+    "authlib>=1.2.0",                    # OAuth2/OIDC client
+    "httpx>=0.24.0",                     # HTTP client for Keycloak API calls
 ]
 
 [[project.authors]]
