@@ -155,7 +155,9 @@ async def main():
         
         async def sse_endpoint(request):
             """Starlette-compatible SSE endpoint"""
-            return await handle_sse(request.scope, request.receive, request._send)
+            await handle_sse(request.scope, request.receive, request._send)
+            # The response is handled by the SSE transport, no need to return anything
+            return Response()
         
         async def handle_root(request):
             """Handle root path requests"""
