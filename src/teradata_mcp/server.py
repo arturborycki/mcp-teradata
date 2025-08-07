@@ -142,23 +142,29 @@ async def main():
         host = os.getenv("MCP_HOST", "0.0.0.0")
         port = int(os.getenv("MCP_PORT", "8000"))
         sse_path = os.getenv("MCP_PATH", "/sse")
-        message_path = "/messages/"
+        message_path = "/messages"
         
         sse_transport = SseServerTransport(message_path)
         
-        async def handle_sse(request):
+        async def handle_sse(scope, receive, send):
             """Handle SSE GET requests"""
-            async with sse_transport.connect_sse(
-                request.scope, request.receive, request._send
-            ) as streams:
+            async with sse_transport.connect_sse(scope, receive, send) as streams:
                 await server.run(
                     streams[0], streams[1], init_options
                 )
-            return Response()
+        
+        async def handle_root(request):
+            """Handle root path requests"""
+            return Response(
+                content='{"name": "teradata-mcp", "version": "0.1.0", "transport": "sse", "endpoints": {"/sse": "SSE connection", "/messages": "POST messages"}}',
+                media_type="application/json"
+            )
         
         # Create Starlette app with proper routing
         routes = [
-            Route(sse_path, endpoint=handle_sse, methods=["GET"]),
+            Route("/", endpoint=handle_root, methods=["GET"]),
+            Route(sse_path, endpoint=handle_sse, methods=["GET", "OPTIONS"]),
+            Route(f"{sse_path}/", endpoint=handle_sse, methods=["GET", "OPTIONS"]),  # Handle trailing slash
             Mount(message_path, app=sse_transport.handle_post_message),
         ]
         
