@@ -147,11 +147,15 @@ async def main():
         sse_transport = SseServerTransport(message_path)
         
         async def handle_sse(scope, receive, send):
-            """Handle SSE GET requests"""
+            """Handle SSE ASGI requests"""
             async with sse_transport.connect_sse(scope, receive, send) as streams:
                 await server.run(
                     streams[0], streams[1], init_options
                 )
+        
+        async def sse_endpoint(request):
+            """Starlette-compatible SSE endpoint"""
+            return await handle_sse(request.scope, request.receive, request._send)
         
         async def handle_root(request):
             """Handle root path requests"""
@@ -163,8 +167,8 @@ async def main():
         # Create Starlette app with proper routing
         routes = [
             Route("/", endpoint=handle_root, methods=["GET"]),
-            Route(sse_path, endpoint=handle_sse, methods=["GET", "OPTIONS"]),
-            Route(f"{sse_path}/", endpoint=handle_sse, methods=["GET", "OPTIONS"]),  # Handle trailing slash
+            Route(sse_path, endpoint=sse_endpoint, methods=["GET", "OPTIONS"]),
+            Route(f"{sse_path}/", endpoint=sse_endpoint, methods=["GET", "OPTIONS"]),  # Handle trailing slash
             Mount(message_path, app=sse_transport.handle_post_message),
         ]
         
