@@ -28,6 +28,11 @@ def set_tools_connection(tdconn: TDConn, db: str):
     _db = db
 
 
+async def call_tool_impl(name: str, arguments: dict[str, Any]) -> ResponseType:
+    """Implementation of tool calling that can be used with FastMCP decorators."""
+    return await handle_tool_call(name, arguments)
+
+
 def format_text_response(text: Any) -> ResponseType:
     """Format a text response."""
     return [types.TextContent(type="text", text=str(text))]
@@ -41,7 +46,7 @@ def format_error_response(error: str) -> ResponseType:
 # --- Database Query Functions ---
 
 async def execute_query(query: str) -> ResponseType:
-    """Execute a SQL query and return results as a list."""
+    """Execute a SQL query and return results as a table."""
     logger.debug(f"Executing query: {query}")
     global _tdconn
     try:

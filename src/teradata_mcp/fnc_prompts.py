@@ -16,6 +16,12 @@ from .prompt import PROMPTS
 logger = logging.getLogger(__name__)
 ResponseType = List[types.TextContent | types.ImageContent | types.EmbeddedResource]
 
+async def get_prompt_impl(name: str, arguments: dict[str, Any] = None) -> List[dict]:
+    """Implementation of prompt getting that can be used with FastMCP decorators."""
+    result = await handle_get_prompt(name, arguments or {})
+    # Convert GetPromptResult to the expected format for FastMCP
+    return result.messages
+
 async def handle_list_prompts() -> list[types.Prompt]:
     logger.debug("Handling list_prompts request")
     return [

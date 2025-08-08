@@ -27,6 +27,15 @@ def set_resource_connection(tdconn: TDConn, db: str):
     _tdconn = tdconn
     _db = db
 
+async def read_resource_impl(uri: str) -> str:
+    """Implementation of resource reading that can be used with FastMCP decorators."""
+    from mcp.server.lowlevel.helper_types import ReadResourceContents
+    result = await handle_read_resource(uri)
+    # Extract content from ReadResourceContents
+    if result and len(result) > 0:
+        return result[0].content
+    return ""
+
 def data_to_yaml(data: Any) -> str:
     """Convert data to YAML format."""
     return yaml.dump(data, indent=2, sort_keys=False)
