@@ -8,7 +8,7 @@ services:
       - MCP_TRANSPORT=sse
       - MCP_HOST=0.0.0.0
       - MCP_PORT=8000
-      - DATABASE_URI=teradatasql://vs:vs@192.168.1.236/vs
+      - DATABASE_URI=teradatasql://user:password@host/db_name
       # Connection resilience settings
       - DB_MAX_RETRIES=3
       - DB_INITIAL_BACKOFF=1.0
