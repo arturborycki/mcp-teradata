@@ -3,28 +3,89 @@ MCP Tool Functions for Teradata Database Operations
 
 This module contains all the tool functions that are exposed through the MCP server.
 Each function implements a specific database operation and returns properly formatted responses.
+Includes OAuth 2.1 authorization support and connection retry logic.
 """
 
 import logging
 import yaml
-from typing import Any, List
+from typing import Any, List, Callable, TypeVar, ParamSpec, Awaitable
 from pydantic import AnyUrl
+import asyncio
+import functools
 
 import mcp.types as types
-from .tdsql import TDConn
+from .oauth_context import require_oauth_authorization, get_oauth_error
+import os
 
 logger = logging.getLogger(__name__)
+
+# Configuration for tool retry behavior
+TOOL_RETRY_MAX_ATTEMPTS = int(os.getenv("TOOL_RETRY_MAX_ATTEMPTS", "1"))  # 1 = one retry attempt
+TOOL_RETRY_DELAY_SECONDS = float(os.getenv("TOOL_RETRY_DELAY_SECONDS", "1.0"))  # 1 second delay
+
+# Type variables for retry decorator
+P = ParamSpec('P')
+T = TypeVar('T')
+
+def with_connection_retry(max_retries: int = TOOL_RETRY_MAX_ATTEMPTS, retry_delay: float = TOOL_RETRY_DELAY_SECONDS):
+    """
+    Decorator to retry tool execution if a ConnectionError occurs.
+    
+    Args:
+        max_retries: Maximum number of retry attempts
+        retry_delay: Delay in seconds between retry attempts
+    
+    Returns:
+        Decorated function that will retry on ConnectionError
+    """
+    def decorator(func: Callable[P, Awaitable[T]]) -> Callable[P, Awaitable[T]]:
+        @functools.wraps(func)
+        async def wrapper(*args: P.args, **kwargs: P.kwargs) -> T:
+            last_exception = None
+            
+            for attempt in range(max_retries + 1):  # +1 because we want max_retries attempts after initial try
+                try:
+                    # On retry attempts, force connection re-establishment
+                    if attempt > 0:
+                        logger.info(f"Retrying {func.__name__} (attempt {attempt + 1}/{max_retries + 1})")
+                        connection_manager = args[0]  # First argument should be connection manager
+                        if hasattr(connection_manager, 'ensure_connection'):
+                            await connection_manager.ensure_connection()
+                        
+                        # Add delay between retry attempts
+                        if retry_delay > 0:
+                            await asyncio.sleep(retry_delay)
+                    
+                    return await func(*args, **kwargs)
+                    
+                except ConnectionError as e:
+                    last_exception = e
+                    if attempt < max_retries:
+                        logger.warning(f"Connection failed on attempt {attempt + 1}, retrying...")
+                        continue
+                    else:
+                        logger.error(f"Connection failed after {max_retries + 1} attempts")
+                        break
+                except Exception as e:
+                    # For non-connection errors, don't retry
+                    raise e
+            
+            # If we get here, all retry attempts failed
+            raise last_exception or ConnectionError("Connection retry failed")
+        
+        return wrapper
+    return decorator
 ResponseType = List[types.TextContent | types.ImageContent | types.EmbeddedResource]
 
 # Global connection and database variables
-_tdconn = None
+_connection_manager = None
 _db = ""
 
 
-def set_tools_connection(tdconn: TDConn, db: str):
-    """Set the global database connection and database name."""
-    global _tdconn, _db
-    _tdconn = tdconn
+def set_tools_connection(connection_manager, db: str):
+    """Set the global database connection manager and database name."""
+    global _connection_manager, _db
+    _connection_manager = connection_manager
     _db = db
 
 
@@ -43,18 +104,38 @@ def format_error_response(error: str) -> ResponseType:
     return format_text_response(f"Error: {error}")
 
 
+async def get_connection():
+    """Get a healthy database connection."""
+    global _connection_manager
+    
+    if not _connection_manager:
+        raise ConnectionError("Database connection not initialized")
+    
+    return await _connection_manager.ensure_connection()
+
+
 # --- Database Query Functions ---
 
 async def execute_query(query: str) -> ResponseType:
     """Execute a SQL query and return results as a table."""
     logger.debug(f"Executing query: {query}")
-    global _tdconn
+    global _connection_manager
+    
+    if not _connection_manager:
+        return format_error_response("Database connection not initialized")
+    
     try:
-        cur = _tdconn.cursor()
+        # Ensure we have a healthy connection
+        tdconn = await _connection_manager.ensure_connection()
+        cur = tdconn.cursor()
         rows = cur.execute(query)
         if rows is None:
             return format_text_response("No results")
         return format_text_response(list([row for row in rows.fetchall()]))
+    except ConnectionError as e:
+        logger.error(f"Database connection error: {e}")
+        # Re-raise ConnectionError so retry logic can handle it
+        raise ConnectionError(f"Database connection failed: {str(e)}")
     except Exception as e:
         logger.error(f"Error executing query: {e}")
         return format_error_response(str(e))
@@ -62,11 +143,21 @@ async def execute_query(query: str) -> ResponseType:
 
 async def list_db() -> ResponseType:
     """List all databases in the Teradata."""
+    global _connection_manager
+    
+    if not _connection_manager:
+        return format_error_response("Database connection not initialized")
+    
     try:
-        global _tdconn
-        cur = _tdconn.cursor()
+        # Ensure we have a healthy connection
+        tdconn = await _connection_manager.ensure_connection()
+        cur = tdconn.cursor()
         rows = cur.execute("select DataBaseName, DECODE(DBKind, 'U', 'User', 'D','DataBase') as DBType , CommentString from dbc.DatabasesV dv where OwnerName <> 'PDCRADM'")
         return format_text_response(list([row for row in rows.fetchall()]))
+    except ConnectionError as e:
+        logger.error(f"Database connection error: {e}")
+        # Re-raise ConnectionError so retry logic can handle it
+        raise ConnectionError(f"Database connection failed: {str(e)}")
     except Exception as e:
         logger.error(f"Error listing schemas: {e}")
         return format_error_response(str(e))
@@ -75,10 +166,14 @@ async def list_db() -> ResponseType:
 async def list_tables(db_name: str) -> ResponseType:
     """List tables in a database of the given name."""
     try:
-        global _tdconn
-        cur = _tdconn.cursor()
+        tdconn = await get_connection()
+        cur = tdconn.cursor()
         rows = cur.execute("select TableName from dbc.TablesV tv where UPPER(tv.DatabaseName) = UPPER(?) and tv.TableKind in ('T','V','O');", [db_name])
         return format_text_response(list([row for row in rows.fetchall()]))
+    except ConnectionError as e:
+        logger.error(f"Database connection error: {e}")
+        # Re-raise ConnectionError so retry logic can handle it
+        raise ConnectionError(f"Database connection failed: {str(e)}")
     except Exception as e:
         logger.error(f"Error listing schemas: {e}")
         return format_error_response(str(e))
@@ -91,8 +186,8 @@ async def show_tables_details(db_name: str, table_name: str) -> ResponseType:
     if len(table_name) == 0:
         table_name = "%"
     try:
-        global _tdconn
-        cur = _tdconn.cursor()
+        tdconn = await get_connection()
+        cur = tdconn.cursor()
         rows = cur.execute(
             """
             sel TableName, ColumnName, CASE ColumnType
@@ -145,6 +240,10 @@ async def show_tables_details(db_name: str, table_name: str) -> ResponseType:
             """
                            , [table_name, db_name])
         return format_text_response(list([row for row in rows.fetchall()]))
+    except ConnectionError as e:
+        logger.error(f"Database connection error: {e}")
+        # Re-raise ConnectionError so retry logic can handle it
+        raise ConnectionError(f"Database connection failed: {str(e)}")
     except Exception as e:
         logger.error(f"Error listing schemas: {e}")
         return format_error_response(str(e))
@@ -153,10 +252,14 @@ async def show_tables_details(db_name: str, table_name: str) -> ResponseType:
 async def list_missing_val(table_name: str) -> ResponseType:
     """List of columns with count of null values."""
     try:
-        global _tdconn
-        cur = _tdconn.cursor()
+        tdconn = await get_connection()
+        cur = tdconn.cursor()
         rows = cur.execute(f"select ColumnName, NullCount, NullPercentage from TD_ColumnSummary ( on {table_name} as InputTable using TargetColumns ('[:]')) as dt ORDER BY NullCount desc")
         return format_text_response(list([row for row in rows.fetchall()]))
+    except ConnectionError as e:
+        logger.error(f"Database connection error: {e}")
+        # Re-raise ConnectionError so retry logic can handle it
+        raise ConnectionError(f"Database connection failed: {str(e)}")
     except Exception as e:
         logger.error(f"Error evaluating features: {e}")
         return format_error_response(str(e))
@@ -165,10 +268,14 @@ async def list_missing_val(table_name: str) -> ResponseType:
 async def list_negative_val(table_name: str) -> ResponseType:
     """List of columns with count of negative values."""
     try:
-        global _tdconn
-        cur = _tdconn.cursor()
+        tdconn = await get_connection()
+        cur = tdconn.cursor()
         rows = cur.execute(f"select ColumnName, NegativeCount from TD_ColumnSummary ( on {table_name} as InputTable using TargetColumns ('[:]')) as dt ORDER BY NegativeCount desc")
         return format_text_response(list([row for row in rows.fetchall()]))
+    except ConnectionError as e:
+        logger.error(f"Database connection error: {e}")
+        # Re-raise ConnectionError so retry logic can handle it
+        raise ConnectionError(f"Database connection failed: {str(e)}")
     except Exception as e:
         logger.error(f"Error evaluating features: {e}")
         return format_error_response(str(e))
@@ -177,12 +284,16 @@ async def list_negative_val(table_name: str) -> ResponseType:
 async def list_dist_cat(table_name: str, col_name: str) -> ResponseType:
     """List distinct categories in the column."""
     try:
-        global _tdconn
-        cur = _tdconn.cursor()
+        tdconn = await get_connection()
+        cur = tdconn.cursor()
         if col_name == "":
             col_name = "[:]"
         rows = cur.execute(f"select * from TD_CategoricalSummary ( on {table_name} as InputTable using TargetColumns ('{col_name}')) as dt")
         return format_text_response(list([row for row in rows.fetchall()]))
+    except ConnectionError as e:
+        logger.error(f"Database connection error: {e}")
+        # Re-raise ConnectionError so retry logic can handle it
+        raise ConnectionError(f"Database connection failed: {str(e)}")
     except Exception as e:
         logger.error(f"Error evaluating features: {e}")
         return format_error_response(str(e))
@@ -191,10 +302,14 @@ async def list_dist_cat(table_name: str, col_name: str) -> ResponseType:
 async def stnd_dev(table_name: str, col_name: str) -> ResponseType:
     """Display standard deviation for column."""
     try:
-        global _tdconn
-        cur = _tdconn.cursor()
+        tdconn = await get_connection()
+        cur = tdconn.cursor()
         rows = cur.execute(f"select * from TD_UnivariateStatistics ( on {table_name} as InputTable using TargetColumns ('{col_name}') Stats('MEAN','STD')) as dt ORDER BY 1,2")
         return format_text_response(list([row for row in rows.fetchall()]))
+    except ConnectionError as e:
+        logger.error(f"Database connection error: {e}")
+        # Re-raise ConnectionError so retry logic can handle it
+        raise ConnectionError(f"Database connection failed: {str(e)}")
     except Exception as e:
         logger.error(f"Error evaluating features: {e}")
         return format_error_response(str(e))
@@ -327,72 +442,89 @@ async def handle_list_tools() -> list[types.Tool]:
     ]
 
 
+@with_connection_retry(max_retries=1, retry_delay=1.0)
+async def execute_tool_with_retry(name: str, arguments: dict | None) -> list[types.TextContent | types.ImageContent | types.EmbeddedResource]:
+    """
+    Execute a tool with connection retry logic.
+    
+    This function wraps the actual tool execution with connection retry capability.
+    If a connection error occurs, it will attempt to re-establish the connection
+    and retry the tool execution once.
+    """
+    logger.debug(f"Executing tool: {name} with arguments: {arguments}")
+    
+    if name == "query":
+        if arguments is None:
+            return [types.TextContent(type="text", text="Error: No query provided")]
+        tool_response = await execute_query(arguments["query"])
+        return tool_response
+    elif name == "list_db":
+        tool_response = await list_db()
+        return tool_response
+    elif name == "list_tables":
+        if arguments is None:
+            return [types.TextContent(type="text", text="Error: Database name provided")]
+        tool_response = await list_tables(arguments["db_name"])
+        return tool_response
+    elif name == "show_tables_details":
+        if arguments is None:
+            return [types.TextContent(type="text", text="Error: Database or table name not provided")]
+        tool_response = await show_tables_details(arguments["db_name"], arguments["table_name"])
+        return tool_response
+    elif name == "list_missing_values":
+        if arguments is None:
+            return [types.TextContent(type="text", text="Error: Table name not provided")]
+        tool_response = await list_missing_val(arguments["table_name"])
+        return tool_response
+    elif name == "list_negative_values":
+        if arguments is None:
+            return [types.TextContent(type="text", text="Error: Table name not provided")]
+        tool_response = await list_negative_val(arguments["table_name"])
+        return tool_response
+    elif name == "list_distinct_values":
+        if arguments is None:
+            return [types.TextContent(type="text", text="Error: Table name not provided")]
+        tool_response = await list_dist_cat(arguments["table_name"], "")
+        return tool_response
+    elif name == "standard_deviation":
+        if arguments is None:
+            return [types.TextContent(type="text", text="Error: Table name or column name not provided")]
+        tool_response = await stnd_dev(arguments["table_name"], arguments["column_name"])
+        return tool_response                        
+
+    return [types.TextContent(type="text", text=f"Unsupported tool: {name}")]
+
+
 async def handle_tool_call(
     name: str, arguments: dict | None
 ) -> list[types.TextContent | types.ImageContent | types.EmbeddedResource]:
     """
-    Handle tool execution requests.
+    Handle tool execution requests with OAuth authorization and connection retry.
     Tools can modify server state and notify clients of changes.
     """
     logger.info(f"Calling tool: {name}::{arguments}")
+    
+    # Check OAuth authorization for this tool
+    if not require_oauth_authorization(name):
+        error_msg = get_oauth_error(name)
+        logger.warning(f"OAuth authorization failed for tool {name}: {error_msg}")
+        return [types.TextContent(type="text", text=f"Authorization Error: {error_msg}")]
+    
     try:
-        if name == "query":
-            if arguments is None:
-                return [
-                    types.TextContent(type="text", text="Error: No query provided")
-                ]
-            tool_response = await execute_query(arguments["query"])
-            return tool_response
-        elif name == "list_db":
-            tool_response = await list_db()
-            return tool_response
-        elif name == "list_tables":
-            if arguments is None:
-                return [
-                    types.TextContent(type="text", text="Error: Database name provided")
-                ]
-            tool_response = await list_tables(arguments["db_name"])
-            return tool_response
-        elif name == "show_tables_details":
-            if arguments is None:
-                return [
-                    types.TextContent(type="text", text="Error: Database or table name not provided")
-                ]
-            tool_response = await show_tables_details(arguments["db_name"], arguments["table_name"])
-            return tool_response
-        elif name == "list_missing_values":
-            if arguments is None:
-                return [
-                    types.TextContent(type="text", text="Error: Table name not provided")
-                ]
-            tool_response = await list_missing_val(arguments["table_name"])
-            return tool_response
-        elif name == "list_negative_values":
-            if arguments is None:
-                return [
-                    types.TextContent(type="text", text="Error: Table name not provided")
-                ]
-            tool_response = await list_negative_val(arguments["table_name"])
-            return tool_response
-        elif name == "list_distinct_values":
-            if arguments is None:
-                return [
-                    types.TextContent(type="text", text="Error: Table name not provided")
-                ]
-            tool_response = await list_dist_cat(arguments["table_name"], "")
-            return tool_response
-        elif name == "standard_deviation":
-            if arguments is None:
-                return [
-                    types.TextContent(type="text", text="Error: Table name or column name not provided")
-                ]
-            tool_response = await stnd_dev(arguments["table_name"], arguments["column_name"])
-            return tool_response                        
-
-        return [types.TextContent(type="text", text=f"Unsupported tool: {name}")]
-
+        # Execute the tool with connection retry logic
+        return await execute_tool_with_retry(name, arguments)
+        
+    except ConnectionError as e:
+        logger.error(f"Connection error executing tool {name} after retries: {e}")
+        return [types.TextContent(
+            type="text", 
+            text=f"Database connection error: {str(e)}. Please check your database connection and try again."
+        )]
     except Exception as e:
         logger.error(f"Error executing tool {name}: {e}")
-        raise ValueError(f"Error executing tool {name}: {str(e)}")
+        return [types.TextContent(
+            type="text", 
+            text=f"Error executing tool {name}: {str(e)}"
+        )]
 
 

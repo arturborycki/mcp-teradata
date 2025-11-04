@@ -11,21 +11,30 @@ from typing import Any, List
 from pydantic import AnyUrl
 
 import mcp.types as types
-from .tdsql import TDConn
 
 logger = logging.getLogger(__name__)
 ResponseType = List[types.TextContent | types.ImageContent | types.EmbeddedResource]
 
 # Global connection and database variables
-_tdconn = None
+_connection_manager = None
 _db = ""
 
 
-def set_resource_connection(tdconn: TDConn, db: str):
-    """Set the global database connection and database name."""
-    global _tdconn, _db
-    _tdconn = tdconn
+def set_resource_connection(connection_manager, db: str):
+    """Set the global database connection manager and database name."""
+    global _connection_manager, _db
+    _connection_manager = connection_manager
     _db = db
+
+
+async def get_connection():
+    """Get a healthy database connection."""
+    global _connection_manager
+    
+    if not _connection_manager:
+        raise ConnectionError("Database connection not initialized")
+    
+    return await _connection_manager.ensure_connection()
 
 async def read_resource_impl(uri: str) -> str:
     """Implementation of resource reading that can be used with FastMCP decorators."""
@@ -44,12 +53,12 @@ async def prefetch_tables(db_name: str) -> dict:
     """Prefetch table and column information."""
     try:
         logger.info("Prefetching table descriptions")
-        global _tdconn
-        cur = _tdconn.cursor()
+        tdconn = await get_connection()
+        cur = tdconn.cursor()
         rows = cur.execute("select TableName, CommentString, DatabaseName from dbc.TablesV tv where UPPER(tv.DatabaseName) = UPPER(?) and tv.TableKind in ('T','V','O');", [db_name])
         table_results = rows.fetchall()
         
-        cur_columns = _tdconn.cursor()
+        cur_columns = tdconn.cursor()
         cur_columns.execute(
                     """
                     sel TableName, ColumnName, CASE ColumnType
@@ -124,6 +133,9 @@ async def prefetch_tables(db_name: str) -> dict:
                 }
         return tables_schema
 
+    except ConnectionError as e:
+        logger.error(f"Database connection error: {e}")
+        return f"Database connection error: {e}"
     except Exception as e:
         logger.error(f"Error prefetching table descriptions: {e}")
         return f"Error prefetching table descriptions: {e}"

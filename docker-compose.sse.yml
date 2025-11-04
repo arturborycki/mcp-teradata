@@ -1,18 +1,11 @@
-version: "3.8"
-
 services:
   mcp-teradata:
-    build: .
-    container_name: mcp-teradata
+    image: mcp-teradata-mcp-teradata:latest
     environment:
+      - DATABASE_URI=teradatasql://vs:vs@192.168.1.236/vs
       - MCP_TRANSPORT=sse
       - MCP_HOST=0.0.0.0
-      - MCP_PORT=8000
-      - DATABASE_URI=teradatasql://vs:vs@192.168.1.236/vs
-      # Connection resilience settings
-      - DB_MAX_RETRIES=3
-      - DB_INITIAL_BACKOFF=1.0
-      - DB_MAX_BACKOFF=30.0
+      - MCP_PORT=8000 # For streamable-http transport
       # OAuth 2.1 Configuration (disabled by default)
       - OAUTH_ENABLED=false
       # Uncomment and configure these for OAuth support:
@@ -26,5 +19,5 @@ services:
       # - OAUTH_VALIDATE_SCOPES=true
       # - OAUTH_REQUIRE_HTTPS=true
     ports:
-      - "8000:8000"
+      - "8981:8000"
     restart: unless-stopped
