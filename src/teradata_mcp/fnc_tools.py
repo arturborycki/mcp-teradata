@@ -8,73 +8,15 @@ Includes OAuth 2.1 authorization support and connection retry logic.
 
 import logging
 import yaml
-from typing import Any, List, Callable, TypeVar, ParamSpec, Awaitable
+from typing import Any, List
 from pydantic import AnyUrl
-import asyncio
-import functools
 
 import mcp.types as types
 from .oauth_context import require_oauth_authorization, get_oauth_error
-import os
+from .retry_utils import with_connection_retry
 
 logger = logging.getLogger(__name__)
 
-# Configuration for tool retry behavior
-TOOL_RETRY_MAX_ATTEMPTS = int(os.getenv("TOOL_RETRY_MAX_ATTEMPTS", "1"))  # 1 = one retry attempt
-TOOL_RETRY_DELAY_SECONDS = float(os.getenv("TOOL_RETRY_DELAY_SECONDS", "1.0"))  # 1 second delay
-
-# Type variables for retry decorator
-P = ParamSpec('P')
-T = TypeVar('T')
-
-def with_connection_retry(max_retries: int = TOOL_RETRY_MAX_ATTEMPTS, retry_delay: float = TOOL_RETRY_DELAY_SECONDS):
-    """
-    Decorator to retry tool execution if a ConnectionError occurs.
-    
-    Args:
-        max_retries: Maximum number of retry attempts
-        retry_delay: Delay in seconds between retry attempts
-    
-    Returns:
-        Decorated function that will retry on ConnectionError
-    """
-    def decorator(func: Callable[P, Awaitable[T]]) -> Callable[P, Awaitable[T]]:
-        @functools.wraps(func)
-        async def wrapper(*args: P.args, **kwargs: P.kwargs) -> T:
-            last_exception = None
-            
-            for attempt in range(max_retries + 1):  # +1 because we want max_retries attempts after initial try
-                try:
-                    # On retry attempts, force connection re-establishment
-                    if attempt > 0:
-                        logger.info(f"Retrying {func.__name__} (attempt {attempt + 1}/{max_retries + 1})")
-                        connection_manager = args[0]  # First argument should be connection manager
-                        if hasattr(connection_manager, 'ensure_connection'):
-                            await connection_manager.ensure_connection()
-                        
-                        # Add delay between retry attempts
-                        if retry_delay > 0:
-                            await asyncio.sleep(retry_delay)
-                    
-                    return await func(*args, **kwargs)
-                    
-                except ConnectionError as e:
-                    last_exception = e
-                    if attempt < max_retries:
-                        logger.warning(f"Connection failed on attempt {attempt + 1}, retrying...")
-                        continue
-                    else:
-                        logger.error(f"Connection failed after {max_retries + 1} attempts")
-                        break
-                except Exception as e:
-                    # For non-connection errors, don't retry
-                    raise e
-            
-            # If we get here, all retry attempts failed
-            raise last_exception or ConnectionError("Connection retry failed")
-        
-        return wrapper
-    return decorator
 ResponseType = List[types.TextContent | types.ImageContent | types.EmbeddedResource]
 
 # Global connection and database variables
@@ -116,6 +58,7 @@ async def get_connection():
 
 # --- Database Query Functions ---
 
+@with_connection_retry()
 async def execute_query(query: str) -> ResponseType:
     """Execute a SQL query and return results as a table."""
     logger.debug(f"Executing query: {query}")
@@ -141,6 +84,7 @@ async def execute_query(query: str) -> ResponseType:
         return format_error_response(str(e))
 
 
+@with_connection_retry()
 async def list_db() -> ResponseType:
     """List all databases in the Teradata."""
     global _connection_manager
@@ -163,6 +107,7 @@ async def list_db() -> ResponseType:
         return format_error_response(str(e))
 
 
+@with_connection_retry()
 async def list_tables(db_name: str) -> ResponseType:
     """List tables in a database of the given name."""
     try:
@@ -179,6 +124,7 @@ async def list_tables(db_name: str) -> ResponseType:
         return format_error_response(str(e))
 
 
+@with_connection_retry()
 async def show_tables_details(db_name: str, table_name: str) -> ResponseType:
     """Get detailed information about a database table."""
     if len(db_name) == 0:
@@ -249,6 +195,7 @@ async def show_tables_details(db_name: str, table_name: str) -> ResponseType:
         return format_error_response(str(e))
 
 
+@with_connection_retry()
 async def list_missing_val(table_name: str) -> ResponseType:
     """List of columns with count of null values."""
     try:
@@ -265,6 +212,7 @@ async def list_missing_val(table_name: str) -> ResponseType:
         return format_error_response(str(e))
 
 
+@with_connection_retry()
 async def list_negative_val(table_name: str) -> ResponseType:
     """List of columns with count of negative values."""
     try:
@@ -281,6 +229,7 @@ async def list_negative_val(table_name: str) -> ResponseType:
         return format_error_response(str(e))
 
 
+@with_connection_retry()
 async def list_dist_cat(table_name: str, col_name: str) -> ResponseType:
     """List distinct categories in the column."""
     try:
@@ -299,6 +248,7 @@ async def list_dist_cat(table_name: str, col_name: str) -> ResponseType:
         return format_error_response(str(e))
 
 
+@with_connection_retry()
 async def stnd_dev(table_name: str, col_name: str) -> ResponseType:
     """Display standard deviation for column."""
     try:
@@ -442,7 +392,6 @@ async def handle_list_tools() -> list[types.Tool]:
     ]
 
 
-@with_connection_retry(max_retries=1, retry_delay=1.0)
 async def execute_tool_with_retry(name: str, arguments: dict | None) -> list[types.TextContent | types.ImageContent | types.EmbeddedResource]:
     """
     Execute a tool with connection retry logic.

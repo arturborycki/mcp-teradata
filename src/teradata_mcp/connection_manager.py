@@ -126,7 +126,18 @@ class TeradataConnectionManager:
                     
                     # Create new connection
                     self._connection = TDConn(self.database_url)
-                    
+
+                    # Set query band for connection tracking
+                    query_band_string = "ApplicationName=Teradata_MCP;"
+                    set_query_band_sql = f"SET QUERY_BAND = '{query_band_string}' UPDATE FOR SESSION;"
+                    try:
+                        cur = self._connection.cursor()
+                        cur.execute(set_query_band_sql)
+                        cur.close()
+                        logger.debug("Query band set successfully")
+                    except Exception as qb_error:
+                        logger.warning(f"Failed to set query band: {obfuscate_password(str(qb_error))}")
+
                     # Verify connection works
                     if await self._is_connection_healthy():
                         self._last_health_check = time.time()
