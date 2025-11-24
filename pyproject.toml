@@ -30,3 +30,4 @@ build-backend = "hatchling.build"
 
 [project.scripts]
 teradata-mcp = "teradata_mcp:main"
+teradata-mcp-dynamic = "teradata_mcp.server_dynamic:main"
