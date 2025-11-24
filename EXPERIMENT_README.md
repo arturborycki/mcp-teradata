@@ -4,11 +4,28 @@ This branch contains an **experimental implementation** of the "tools-as-code" p
 
 ## ⚡ Quick Start
 
-### 🎯 IMPORTANT: Using search_only Mode
+### ⚠️ IMPORTANT: Recommended Configuration
+
+**RECOMMENDED: Use `hybrid` mode instead of `search_only`**
+
+The `search_only` mode has a known limitation: Claude can discover tools but may not execute them reliably.
+
+**Best Configuration:**
+```bash
+export TOOLS_MODE=hybrid  # All tools visible immediately
+```
+
+[Configuration guide →](docs/CLAUDE_DESKTOP_CONFIG.md)
+
+---
+
+### 🧪 search_only Mode (Experimental - Has Limitations)
 
 When running in `TOOLS_MODE=search_only`, **only 1 tool appears initially**: `search_tool`.
 
-**Start every conversation with:**
+**Known Issue:** Claude discovers tools but may fail to execute them.
+
+**If you still want to try it:**
 ```
 Use search_tool to find all available database tools
 ```

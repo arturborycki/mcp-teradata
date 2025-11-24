@@ -44,9 +44,39 @@ Use the original server with all tools registered upfront:
 }
 ```
 
-### Option 2: Dynamic Server - Search Only Mode (Experimental)
+### Option 2: Dynamic Server - Hybrid Mode (Recommended)
 
-Use the tools-as-code pattern with only `search_tool` exposed:
+All tools exposed via dynamic loading system:
+
+```json
+{
+  "mcpServers": {
+    "teradata": {
+      "command": "uv",
+      "args": [
+        "--directory",
+        "/Users/naotar/Workfiles/MCP/mcp-teradata",
+        "run",
+        "python",
+        "-m",
+        "teradata_mcp.server_dynamic"
+      ],
+      "env": {
+        "DATABASE_URI": "teradatasql://user:pass@host/database",
+        "TOOLS_MODE": "hybrid"
+      }
+    }
+  }
+}
+```
+
+**This is the recommended configuration!** All tools work immediately without search step.
+
+### Option 3: Dynamic Server - Search Only Mode (Not Recommended)
+
+**⚠️ Known Limitation:** Claude can discover tools but may fail to execute them.
+
+Use only for testing the experimental pattern:
 
 ```json
 {
@@ -70,31 +100,7 @@ Use the tools-as-code pattern with only `search_tool` exposed:
 }
 ```
 
-### Option 3: Dynamic Server - Hybrid Mode (Experimental)
-
-All tools exposed but loaded dynamically:
-
-```json
-{
-  "mcpServers": {
-    "teradata": {
-      "command": "uv",
-      "args": [
-        "--directory",
-        "/Users/naotar/Workfiles/MCP/mcp-teradata",
-        "run",
-        "python",
-        "-m",
-        "teradata_mcp.server_dynamic"
-      ],
-      "env": {
-        "DATABASE_URI": "teradatasql://user:pass@host/database",
-        "TOOLS_MODE": "hybrid"
-      }
-    }
-  }
-}
-```
+**Issue:** After discovering tools with `search_tool`, Claude may not reliably execute them.
 
 ## Environment Variables
 
@@ -189,7 +195,25 @@ All tools exposed but loaded dynamically:
 
 ### Troubleshooting Common Issues
 
-#### Issue 1: "No such file or directory"
+#### Issue 1: Tools Discovered But Not Executed (search_only mode)
+
+**Problem:**
+```
+Claude: I found the query tool
+Claude: [Doesn't actually execute it, looks for environment variables instead]
+```
+
+**Solution:**
+Switch to `hybrid` mode in your config:
+```json
+"TOOLS_MODE": "hybrid"
+```
+
+Restart Claude Desktop. All tools will work immediately.
+
+**Root Cause:** The `search_only` pattern requires Claude to discover then execute tools. Claude's current behavior doesn't support this two-step process reliably.
+
+#### Issue 2: "No such file or directory"
 
 **Problem:**
 ```

@@ -1,8 +1,21 @@
 # Quick Start: Teradata MCP in Claude Desktop
 
-**⚡ You're running in experimental `search_only` mode - only 1 tool visible initially!**
+## ⚠️ IMPORTANT: search_only Mode Has Limitations
 
-## 🎯 The One Thing You Need to Know
+**The `search_only` mode has a known issue:** Claude can discover tools but may not execute them reliably.
+
+**RECOMMENDED: Use `hybrid` mode instead!**
+
+Change your config:
+```json
+"TOOLS_MODE": "hybrid"
+```
+
+Then restart Claude Desktop. All tools will work immediately!
+
+---
+
+## 🎯 If Using search_only Mode (Experimental)
 
 **Before using any Teradata tools, start with this:**
 
@@ -10,7 +23,7 @@
 Use search_tool to find all available database tools
 ```
 
-Then use the discovered tools normally!
+**Note:** Even after discovery, Claude may not execute the tools. Switch to `hybrid` mode if you encounter issues.
 
 ---
 
