@@ -2,7 +2,7 @@
 Standard Deviation Tool - Calculate mean and standard deviation for columns.
 """
 
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 from pydantic import Field
 import logging
 
@@ -60,22 +60,44 @@ class StandardDeviationTool(ToolBase):
         pass
 
     @with_connection_retry()
-    async def execute(self, input_data: StandardDeviationInput, context: Dict[str, Any]) -> StandardDeviationOutput:
+    async def execute(self, input_data: StandardDeviationInput, context: Optional[Dict[str, Any]] = None) -> StandardDeviationOutput:
         """
         Calculate statistics for column.
 
+        Connection Resolution (priority order):
+        1. Attached connection (self._connection_manager) - set via attach_connection()
+        2. Context parameter (context['connection_manager']) - backward compatible
+        3. ConnectionRegistry default - global fallback
+
         Args:
             input_data: Table and column name
-            context: Execution context with connection_manager
+            context: Optional execution context with connection_manager (backward compatible)
 
         Returns:
             Statistical summary
         """
-        connection_manager = context.get('connection_manager')
+        # Priority 1: Use attached connection
+        connection_manager = self._connection_manager
+
+        # Priority 2: Fallback to context (backward compatible)
+        if connection_manager is None and context:
+            connection_manager = context.get('connection_manager')
+
+        # Priority 3: Fallback to registry
+        if connection_manager is None:
+            try:
+                from ...connection_registry import ConnectionRegistry
+                registry = ConnectionRegistry.get_instance()
+                connection_manager = registry.get_connection()
+                if connection_manager:
+                    logger.debug("Using connection from ConnectionRegistry")
+            except Exception as e:
+                logger.warning(f"Could not get connection from registry: {e}")
+
         if not connection_manager:
             return StandardDeviationOutput(
                 success=False,
-                error="Database connection not initialized"
+                error="Database connection not initialized (no attached, context, or registry connection available)"
             )
 
         try:
