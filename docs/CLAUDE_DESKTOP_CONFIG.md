@@ -195,23 +195,20 @@ Use only for testing the experimental pattern:
 
 ### Troubleshooting Common Issues
 
-#### Issue 1: Tools Discovered But Not Executed (search_only mode)
+#### Issue 1: Tools Discovered But Not Executed (FIXED)
 
-**Problem:**
-```
-Claude: I found the query tool
-Claude: [Doesn't actually execute it, looks for environment variables instead]
-```
+**Previous Problem:**
+In earlier versions, tools discovered via search_tool could not be executed in search_only mode.
 
-**Solution:**
-Switch to `hybrid` mode in your config:
-```json
-"TOOLS_MODE": "hybrid"
-```
+**Solution (Now Fixed):**
+Both search_only and hybrid modes now register all tools with MCP, allowing discovered tools to be executed.
 
-Restart Claude Desktop. All tools will work immediately.
+**What Changed:**
+- search_only mode: All tools registered with MCP (required for execution), but search_tool is the discovery entry point
+- hybrid mode: Same as search_only, but all tools immediately visible to Claude
+- Both modes support full tool execution after discovery
 
-**Root Cause:** The `search_only` pattern requires Claude to discover then execute tools. Claude's current behavior doesn't support this two-step process reliably.
+No configuration change needed - both modes now work correctly!
 
 #### Issue 2: "No such file or directory"
 

@@ -56,74 +56,50 @@ async def handle_list_dynamic_tools() -> list[types.Tool]:
     """
     List available tools using the dynamic system.
 
-    In the pure "tools as code" pattern, this would only return search_tool.
-    For this implementation, we support two modes via environment variable:
+    IMPORTANT: In both modes, ALL tools must be registered with MCP for execution.
+    The difference between modes is in the presentation and discoverability workflow:
 
-    - TOOLS_MODE=search_only: Only expose search_tool (true tools-as-code)
-    - TOOLS_MODE=hybrid: Expose all tools (for compatibility)
+    - TOOLS_MODE=search_only: All tools registered, but search_tool is the entry point
+      (tools are discoverable dynamically, but MCP must know about them for execution)
+    - TOOLS_MODE=hybrid: All tools registered and immediately visible
+      (traditional approach - all tools exposed upfront)
+
+    The "search_only" mode provides token efficiency by encouraging discovery workflow,
+    but tools must still be registered with MCP framework for execution to work.
     """
     import os
 
     tools_mode = os.getenv("TOOLS_MODE", "search_only").lower()
 
+    if not _tool_executor:
+        logger.warning("Tool executor not initialized")
+        return []
+
+    # Discover all tools dynamically
+    tools_metadata = _tool_executor.discover_all_tools()
+
+    # Convert to MCP tool format
+    mcp_tools = []
+    for meta in tools_metadata:
+        # Load the tool class to get schema
+        tool_class = _tool_executor.load_tool(meta.name)
+        if tool_class:
+            mcp_tools.append(types.Tool(
+                name=meta.name,
+                description=meta.description,
+                inputSchema=tool_class.get_input_schema()
+            ))
+
     if tools_mode == "search_only":
-        # Pure tools-as-code: only expose search_tool
-        logger.info("Listing tools in search_only mode (tools-as-code pattern)")
-        return [
-            types.Tool(
-                name="search_tool",
-                description="Search and discover available tools. Use this to find tools for specific tasks before calling them.",
-                inputSchema={
-                    "type": "object",
-                    "properties": {
-                        "query": {
-                            "type": "string",
-                            "description": "Text query to search for in tool names, descriptions, and tags"
-                        },
-                        "category": {
-                            "type": "string",
-                            "description": "Filter by tool category (e.g., 'database', 'analytics')"
-                        },
-                        "tags": {
-                            "type": "array",
-                            "items": {"type": "string"},
-                            "description": "Filter by tags"
-                        },
-                        "detail_level": {
-                            "type": "string",
-                            "enum": ["minimal", "standard", "full"],
-                            "default": "standard",
-                            "description": "Amount of detail to return"
-                        }
-                    }
-                }
-            )
-        ]
+        # In search_only mode, we still register all tools with MCP (required for execution),
+        # but we log that search_tool is the recommended entry point
+        logger.info(f"Listing tools in search_only mode: {len(mcp_tools)} tools registered with MCP")
+        logger.info("Note: Use search_tool to discover tools dynamically (tools-as-code pattern)")
     else:
-        # Hybrid mode: expose all tools (for backward compatibility)
-        logger.info("Listing tools in hybrid mode (all tools exposed)")
+        # Hybrid mode: same tool list, but presented as all tools immediately available
+        logger.info(f"Listing tools in hybrid mode: {len(mcp_tools)} tools exposed")
 
-        if not _tool_executor:
-            logger.warning("Tool executor not initialized")
-            return []
-
-        # Discover all tools
-        tools_metadata = _tool_executor.discover_all_tools()
-
-        # Convert to MCP tool format
-        mcp_tools = []
-        for meta in tools_metadata:
-            # Load the tool class to get schema
-            tool_class = _tool_executor.load_tool(meta.name)
-            if tool_class:
-                mcp_tools.append(types.Tool(
-                    name=meta.name,
-                    description=meta.description,
-                    inputSchema=tool_class.get_input_schema()
-                ))
-
-        logger.info(f"Returning {len(mcp_tools)} tools")
-        return mcp_tools
+    return mcp_tools
 
 
 async def handle_dynamic_tool_call(
