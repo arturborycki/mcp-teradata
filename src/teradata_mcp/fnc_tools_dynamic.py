@@ -171,15 +171,16 @@ async def handle_dynamic_tool_call(
             user_id=None
         )
 
-        # Add tool_executor to context for search_tool
+        # Add tool_executor to context for search_tool and execute_tool
         context_dict = context.model_dump()
         context_dict['tool_executor'] = _tool_executor
 
         # Execute the tool
+        # IMPORTANT: Pass context_dict (with tool_executor) not context object
         result = await _tool_executor.execute_tool(
             tool_name=name,
             arguments=arguments or {},
-            context=context
+            context=context_dict  # Pass dict, not ToolContext object
         )
 
         # Format response
