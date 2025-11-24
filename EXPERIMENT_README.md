@@ -4,6 +4,19 @@ This branch contains an **experimental implementation** of the "tools-as-code" p
 
 ## ⚡ Quick Start
 
+### 🎯 IMPORTANT: Using search_only Mode
+
+When running in `TOOLS_MODE=search_only`, **only 1 tool appears initially**: `search_tool`.
+
+**Start every conversation with:**
+```
+Use search_tool to find all available database tools
+```
+
+Then use the discovered tools normally! [Full guide →](QUICK_START_CLAUDE_DESKTOP.md)
+
+---
+
 ### Try the Pure Tools-as-Code Pattern
 
 ```bash
@@ -80,17 +93,20 @@ search_tool({
 ```bash
 export TOOLS_MODE=search_only
 # Only search_tool exposed, 98.7% token reduction
+# ⚠️ Important: Start conversations with "Use search_tool to find all database tools"
 ```
 
 **Hybrid Mode** (All tools via dynamic system):
 ```bash
 export TOOLS_MODE=hybrid
 # All tools exposed but loaded dynamically
+# ✅ Works immediately, no search needed
 ```
 
 **Legacy Mode** (Original behavior):
 ```bash
 # Use original server.py - no changes
+# ✅ Stable, all tools visible
 ```
 
 ### 3. File-Based Tool Definition
