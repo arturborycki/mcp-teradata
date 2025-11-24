@@ -256,7 +256,7 @@ class MyTool(ToolBase):
 
 3. **Test the tool:**
    ```bash
-   .venv/bin/python3 scripts/test-dynamic-tools.py
+   uv run python scripts/test-dynamic-tools.py
    ```
 
 4. **Tool is automatically discovered** - no server restart needed in development!
@@ -266,7 +266,7 @@ class MyTool(ToolBase):
 ### Run All Tests
 
 ```bash
-.venv/bin/python3 scripts/test-dynamic-tools.py
+uv run python scripts/test-dynamic-tools.py
 ```
 
 ### Test Output

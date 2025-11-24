@@ -16,14 +16,14 @@ export DATABASE_URI="teradatasql://user:pass@host/database"
 export MCP_TRANSPORT=stdio
 
 # Run the experimental server
-.venv/bin/python3 -m teradata_mcp.server_dynamic
+uv run python -m teradata_mcp.server_dynamic
 ```
 
 ### Run Tests
 
 ```bash
 # Test the dynamic tools system
-.venv/bin/python3 scripts/test-dynamic-tools.py
+uv run python scripts/test-dynamic-tools.py
 ```
 
 ## 🎯 What's New
@@ -141,7 +141,7 @@ class QueryTool(ToolBase):
 ### Automated Tests
 
 ```bash
-.venv/bin/python3 scripts/test-dynamic-tools.py
+uv run python scripts/test-dynamic-tools.py
 ```
 
 Tests verify:
@@ -157,7 +157,7 @@ Tests verify:
 # Terminal 1: Start server in search_only mode
 export TOOLS_MODE=search_only
 export DATABASE_URI="teradatasql://user:pass@host/db"
-.venv/bin/python3 -m teradata_mcp.server_dynamic
+uv run python -m teradata_mcp.server_dynamic
 
 # Terminal 2: Test with Claude Desktop or MCP inspector
 # Call search_tool to discover available tools
