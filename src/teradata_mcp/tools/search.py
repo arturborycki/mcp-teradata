@@ -42,6 +42,10 @@ class SearchToolOutput(ToolOutput):
         default=0,
         description="Number of tools found"
     )
+    execution_guide: str = Field(
+        default="",
+        description="Instructions for executing the discovered tools"
+    )
 
 
 class SearchTool(ToolBase):
@@ -102,11 +106,67 @@ class SearchTool(ToolBase):
             detail_level=input_data.detail_level
         )
 
+        # Generate execution guide for tools-as-code pattern
+        execution_guide = self._generate_execution_guide(tools, input_data.detail_level)
+
         return SearchToolOutput(
             success=True,
             tools=tools,
-            count=len(tools)
+            count=len(tools),
+            execution_guide=execution_guide
         )
+
+    def _generate_execution_guide(self, tools: List[dict], detail_level: str) -> str:
+        """
+        Generate execution instructions for discovered tools.
+
+        In tools-as-code pattern (search_only mode), tools must be executed
+        via the execute_tool proxy.
+        """
+        if not tools:
+            return "No tools found matching your criteria."
+
+        import os
+        tools_mode = os.getenv("TOOLS_MODE", "search_only").lower()
+
+        if tools_mode == "search_only":
+            # Execute proxy pattern active
+            guide = [
+                f"Found {len(tools)} tool(s). To execute any of these tools:",
+                "",
+                "Use execute_tool with:",
+                "  • tool_name: Name of the tool (e.g., 'query', 'list_db')",
+                "  • arguments: Tool arguments as shown in inputSchema",
+                "",
+                "Example:",
+                "  execute_tool({",
+                "    \"tool_name\": \"query\",",
+                "    \"arguments\": {\"query\": \"SELECT * FROM table\"}",
+                "  })",
+            ]
+
+            if detail_level == "full" and tools:
+                guide.extend([
+                    "",
+                    f"First tool example: {tools[0]['name']}",
+                    f"  execute_tool({{",
+                    f"    \"tool_name\": \"{tools[0]['name']}\",",
+                    f"    \"arguments\": <use inputSchema from above>",
+                    f"  }})"
+                ])
+
+        else:
+            # Hybrid mode - tools directly callable
+            guide = [
+                f"Found {len(tools)} tool(s). These tools are directly callable.",
+                "",
+                "You can call them directly by name:",
+                ", ".join(t['name'] for t in tools[:5])
+            ]
+            if len(tools) > 5:
+                guide.append(f"... and {len(tools) - 5} more")
+
+        return "\n".join(guide)
 
 
 # Convenience function for use in MCP handlers

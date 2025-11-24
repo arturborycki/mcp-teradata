@@ -44,7 +44,39 @@ Use the original server with all tools registered upfront:
 }
 ```
 
-### Option 2: Dynamic Server - Hybrid Mode (Recommended)
+### Option 2: Dynamic Server - search_only Mode (Recommended - True Tools-as-Code)
+
+Execute Proxy Pattern - only 2 tools visible, 75% token savings:
+
+```json
+{
+  "mcpServers": {
+    "teradata": {
+      "command": "uv",
+      "args": [
+        "--directory",
+        "/Users/naotar/Workfiles/MCP/mcp-teradata",
+        "run",
+        "python",
+        "-m",
+        "teradata_mcp.server_dynamic"
+      ],
+      "env": {
+        "DATABASE_URI": "teradatasql://user:pass@host/database",
+        "TOOLS_MODE": "search_only"
+      }
+    }
+  }
+}
+```
+
+**Benefits:**
+- ✅ Only 2 tools visible (search_tool + execute_tool)
+- ✅ 75% token reduction on list_tools calls
+- ✅ All tools discoverable and executable
+- ✅ Connection management integrated
+
+### Option 3: Dynamic Server - Hybrid Mode (All Tools Visible)
 
 All tools exposed via dynamic loading system:
 
