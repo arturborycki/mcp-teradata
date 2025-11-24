@@ -228,7 +228,12 @@ class ToolExecutor:
 
             # Execute the tool
             # Pass context as dict for backward compatibility (context is now optional)
-            context_dict = context.model_dump() if context else None
+            if context is None:
+                context_dict = None
+            elif isinstance(context, dict):
+                context_dict = context  # Already a dict
+            else:
+                context_dict = context.model_dump()  # ToolContext object
             output = await tool_instance.execute(input_data, context_dict)
 
             # Return as dict
