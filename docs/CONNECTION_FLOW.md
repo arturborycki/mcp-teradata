@@ -1,8 +1,23 @@
 # Connection Sharing in Tools-as-Code Pattern
 
+> **📝 Note:** This document describes the **original context-based connection pattern**. For the **new registry-based pattern** with external connection management, see [CONNECTION_REGISTRY.md](CONNECTION_REGISTRY.md).
+
 ## Overview
 
 The Teradata database connection is shared across all MCP tool calls through a **singleton pattern** using global state and context passing. This ensures efficient connection pooling and retry logic.
+
+### Two Connection Patterns Available
+
+1. **Context-Based Pattern** (Original - documented here)
+   - Connection passed via `ToolContext` at execution time
+   - Stored in module-level globals
+   - Simple and backward compatible
+
+2. **Registry-Based Pattern** (New - see [CONNECTION_REGISTRY.md](CONNECTION_REGISTRY.md))
+   - Connection attached to tools at registration time
+   - Stored in external `ConnectionRegistry` singleton
+   - Supports multiple connections, runtime swapping, easier testing
+   - Recommended for new implementations
 
 ## Connection Flow Diagram
 

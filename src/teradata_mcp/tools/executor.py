@@ -1,5 +1,5 @@
 """
-Dynamic Tool Executor - Loads and executes tools on demand.
+Dynamic Tool Executor - Loads and executes tools on demand with connection registry support.
 """
 
 import importlib
@@ -16,18 +16,19 @@ logger = logging.getLogger(__name__)
 
 class ToolExecutor:
     """
-    Manages dynamic loading and execution of tools.
+    Manages dynamic loading and execution of tools with connection registry support.
 
     Features:
     - Discovers tools from filesystem
     - Loads tools on-demand
     - Caches loaded tools for performance
     - Validates tool implementations
+    - Attaches connections from registry to tools at execution time
     """
 
     def __init__(self, tools_dir: Optional[Path] = None):
         """
-        Initialize the tool executor.
+        Initialize the tool executor with connection registry support.
 
         Args:
             tools_dir: Directory containing tool modules (defaults to ./tools/)
@@ -37,6 +38,15 @@ class ToolExecutor:
         self.tools_dir = tools_dir
         self._tool_cache: Dict[str, Type[ToolBase]] = {}
         self._metadata_cache: Dict[str, ToolMetadata] = {}
+
+        # Import registry here to avoid circular imports
+        try:
+            from ..connection_registry import ConnectionRegistry
+            self._registry = ConnectionRegistry.get_instance()
+            logger.debug("ToolExecutor initialized with ConnectionRegistry")
+        except ImportError:
+            self._registry = None
+            logger.warning("ConnectionRegistry not available, falling back to context-based connections")
 
     def discover_all_tools(self) -> List[ToolMetadata]:
         """
@@ -148,18 +158,40 @@ class ToolExecutor:
         self,
         tool_name: str,
         arguments: Dict[str, Any],
-        context: ToolContext
+        context: Optional[ToolContext] = None,
+        connection_name: Optional[str] = None
     ) -> Dict[str, Any]:
         """
-        Load and execute a tool with given arguments.
+        Load and execute a tool with connection from registry or context.
+
+        Connection Resolution Priority:
+        1. Connection from registry (if connection_name provided)
+        2. Connection from context (if context provided - backward compatible)
+        3. Default connection from registry (if registry available)
+
+        This implements the "attach at registration" pattern where tools receive
+        their connection reference before execution, aligning with the tools-as-code
+        vision where tools attach to existing resources.
 
         Args:
             tool_name: Name of the tool to execute
             arguments: Tool input arguments
-            context: Execution context
+            context: Optional execution context (for backward compatibility)
+            connection_name: Optional connection name from registry
 
         Returns:
             Tool output as dictionary
+
+        Example:
+            # Modern approach - registry-based
+            result = await executor.execute_tool("query", {"query": "SELECT 1"})
+
+            # Legacy approach - context-based (still supported)
+            context = ToolContext(connection_manager=conn, db_name="demo")
+            result = await executor.execute_tool("query", {"query": "SELECT 1"}, context)
+
+            # Multi-connection approach
+            result = await executor.execute_tool("query", {...}, connection_name="replica")
         """
         # Load the tool
         tool_class = self.load_tool(tool_name)
@@ -173,11 +205,31 @@ class ToolExecutor:
             # Instantiate the tool
             tool_instance = tool_class()
 
+            # NEW: Attach connection from registry (if available)
+            if self._registry:
+                # Priority 1: Specific connection name provided
+                if connection_name:
+                    connection = self._registry.get_connection(connection_name)
+                    if connection:
+                        tool_instance.attach_connection(connection)
+                        logger.debug(f"Attached connection '{connection_name}' to tool '{tool_name}'")
+                    else:
+                        logger.warning(f"Connection '{connection_name}' not found in registry")
+
+                # Priority 2: Use default connection if no context provided
+                elif context is None:
+                    default_connection = self._registry.get_connection()
+                    if default_connection:
+                        tool_instance.attach_connection(default_connection)
+                        logger.debug(f"Attached default connection to tool '{tool_name}'")
+
             # Validate and parse input
             input_data = tool_class.InputSchema(**arguments)
 
             # Execute the tool
-            output = await tool_instance.execute(input_data, context.model_dump())
+            # Pass context as dict for backward compatibility (context is now optional)
+            context_dict = context.model_dump() if context else None
+            output = await tool_instance.execute(input_data, context_dict)
 
             # Return as dict
             return output.model_dump()

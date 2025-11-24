@@ -34,6 +34,7 @@ from mcp.server.fastmcp import FastMCP
 
 from .tdsql import obfuscate_password
 from .connection_manager import TeradataConnectionManager
+from .connection_registry import ConnectionRegistry
 
 # Import BOTH tool systems
 from .fnc_tools import (
@@ -105,7 +106,21 @@ async def initialize_database():
 
         await _connection_manager.ensure_connection()
 
-        # Initialize BOTH tool systems
+        # Register connection in external registry (tools-as-code pattern)
+        registry = ConnectionRegistry.get_instance()
+        await registry.register_connection(
+            "default",
+            _connection_manager,
+            set_as_default=True,
+            metadata={
+                "database": _db,
+                "transport": os.getenv("MCP_TRANSPORT", "stdio"),
+                "tools_mode": os.getenv("TOOLS_MODE", "search_only")
+            }
+        )
+        logger.info("Connection registered in ConnectionRegistry as 'default'")
+
+        # Initialize BOTH tool systems (backward compatibility)
         set_tools_connection_old(_connection_manager, _db)
         initialize_dynamic_tools(_connection_manager, _db)
 
