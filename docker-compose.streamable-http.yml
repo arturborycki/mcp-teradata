@@ -1,0 +1,47 @@
+version: "3.8"
+
+services:
+  mcp-teradata:
+    build: .
+    container_name: mcp-teradata-streamable-http
+    environment:
+      # Transport Configuration
+      - MCP_TRANSPORT=streamable-http
+      - MCP_HOST=0.0.0.0
+      - MCP_PORT=8000
+      - MCP_PATH=/mcp/
+
+      # Database Configuration
+      - DATABASE_URI=teradatasql://user:password@host/db_name
+
+      # Connection Resilience Settings
+      - DB_MAX_RETRIES=3
+      - DB_INITIAL_BACKOFF=1.0
+      - DB_MAX_BACKOFF=30.0
+
+      # Tool Retry Settings (applied at tool call level)
+      - TOOL_MAX_RETRIES=2
+      - TOOL_RETRY_INITIAL_DELAY=0.5
+      - TOOL_MAX_RETRY_DELAY=2.0
+
+      # OAuth 2.1 Configuration (disabled by default)
+      - OAUTH_ENABLED=false
+      # Uncomment and configure these for OAuth support:
+      # - KEYCLOAK_URL=https://your-keycloak-server.com
+      # - KEYCLOAK_REALM=your-realm
+      # - KEYCLOAK_CLIENT_ID=teradata-mcp
+      # - KEYCLOAK_CLIENT_SECRET=your-client-secret
+      # - OAUTH_RESOURCE_SERVER_URL=https://your-mcp-server.com
+      # - OAUTH_REQUIRED_SCOPES=teradata:read,teradata:query
+      # - OAUTH_VALIDATE_AUDIENCE=true
+      # - OAUTH_VALIDATE_SCOPES=true
+      # - OAUTH_REQUIRE_HTTPS=true
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s

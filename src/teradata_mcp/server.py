@@ -66,34 +66,35 @@ async def initialize_database():
     parsed_url = urlparse(database_url)
     _db = parsed_url.path.lstrip('/') 
     
+    # Create connection manager with configurable retry settings
+    max_retries = int(os.environ.get("DB_MAX_RETRIES", "3"))
+    initial_backoff = float(os.environ.get("DB_INITIAL_BACKOFF", "1.0"))
+    max_backoff = float(os.environ.get("DB_MAX_BACKOFF", "30.0"))
+
+    _connection_manager = TeradataConnectionManager(
+        database_url=database_url,
+        db_name=_db,
+        max_retries=max_retries,
+        initial_backoff=initial_backoff,
+        max_backoff=max_backoff
+    )
+
+    # Set the connection manager in the function modules BEFORE attempting connection
+    # This ensures tools can attempt reconnection even if initial connection fails
+    set_tools_connection(_connection_manager, _db)
+    set_resource_connection(_connection_manager, _db)
+
     try:
-        # Create connection manager with configurable retry settings
-        max_retries = int(os.environ.get("DB_MAX_RETRIES", "3"))
-        initial_backoff = float(os.environ.get("DB_INITIAL_BACKOFF", "1.0"))
-        max_backoff = float(os.environ.get("DB_MAX_BACKOFF", "30.0"))
-        
-        _connection_manager = TeradataConnectionManager(
-            database_url=database_url,
-            db_name=_db,
-            max_retries=max_retries,
-            initial_backoff=initial_backoff,
-            max_backoff=max_backoff
-        )
-        
-        # Test initial connection
+        # Test initial connection (but don't fail if it doesn't work)
         await _connection_manager.ensure_connection()
-        
-        # Set the connection manager in the function modules
-        set_tools_connection(_connection_manager, _db)
-        set_resource_connection(_connection_manager, _db)
         logger.info("Successfully connected to database and initialized connection manager")
-        
+
     except Exception as e:
         logger.warning(
-            f"Could not connect to database: {obfuscate_password(str(e))}",
+            f"Could not connect to database on startup: {obfuscate_password(str(e))}",
         )
         logger.warning(
-            "The MCP server will start but database operations will fail until a valid connection is established.",
+            "The MCP server will start and will attempt to connect on each tool call.",
         )
 
 async def initialize_oauth():

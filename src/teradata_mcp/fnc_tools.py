@@ -62,14 +62,10 @@ async def get_connection():
 async def execute_query(query: str) -> ResponseType:
     """Execute a SQL query and return results as a table."""
     logger.debug(f"Executing query: {query}")
-    global _connection_manager
-    
-    if not _connection_manager:
-        return format_error_response("Database connection not initialized")
-    
+
     try:
-        # Ensure we have a healthy connection
-        tdconn = await _connection_manager.ensure_connection()
+        # get_connection will raise ConnectionError if manager is not initialized
+        tdconn = await get_connection()
         cur = tdconn.cursor()
         rows = cur.execute(query)
         if rows is None:
@@ -78,7 +74,7 @@ async def execute_query(query: str) -> ResponseType:
     except ConnectionError as e:
         logger.error(f"Database connection error: {e}")
         # Re-raise ConnectionError so retry logic can handle it
-        raise ConnectionError(f"Database connection failed: {str(e)}")
+        raise
     except Exception as e:
         logger.error(f"Error executing query: {e}")
         return format_error_response(str(e))
@@ -87,21 +83,16 @@ async def execute_query(query: str) -> ResponseType:
 @with_connection_retry()
 async def list_db() -> ResponseType:
     """List all databases in the Teradata."""
-    global _connection_manager
-    
-    if not _connection_manager:
-        return format_error_response("Database connection not initialized")
-    
     try:
-        # Ensure we have a healthy connection
-        tdconn = await _connection_manager.ensure_connection()
+        # get_connection will raise ConnectionError if manager is not initialized
+        tdconn = await get_connection()
         cur = tdconn.cursor()
         rows = cur.execute("select DataBaseName, DECODE(DBKind, 'U', 'User', 'D','DataBase') as DBType , CommentString from dbc.DatabasesV dv where OwnerName <> 'PDCRADM'")
         return format_text_response(list([row for row in rows.fetchall()]))
     except ConnectionError as e:
         logger.error(f"Database connection error: {e}")
         # Re-raise ConnectionError so retry logic can handle it
-        raise ConnectionError(f"Database connection failed: {str(e)}")
+        raise
     except Exception as e:
         logger.error(f"Error listing schemas: {e}")
         return format_error_response(str(e))
