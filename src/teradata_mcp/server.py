@@ -7,6 +7,7 @@ import argparse
 import asyncio
 import logging
 import os
+from contextlib import asynccontextmanager
 from starlette.applications import Starlette
 from mcp.server.sse import SseServerTransport
 from starlette.requests import Request
@@ -129,6 +130,33 @@ async def initialize_oauth():
         _oauth_middleware = None
         set_oauth_context(None)
 
+# Flag to track if we've initialized (for lifespan)
+_initialized = False
+
+@asynccontextmanager
+async def lifespan(app):
+    """Lifespan context manager for FastAPI to ensure initialization before accepting requests."""
+    global _initialized
+
+    # Startup: Initialize OAuth and database before accepting requests
+    logger.info("Starting initialization sequence...")
+    await initialize_oauth()
+    await initialize_database()
+    setup_oauth_endpoints()
+    _initialized = True
+    logger.info("Initialization complete, server ready to accept requests")
+
+    yield
+
+    # Shutdown: Clean up connections
+    logger.info("Shutting down server...")
+    if _connection_manager:
+        try:
+            await _connection_manager.close()
+            logger.info("Database connections closed")
+        except Exception as e:
+            logger.error(f"Error closing database connections: {e}")
+
 # Create FastMCP app
 app = FastMCP("teradata-mcp")
 
@@ -158,8 +186,8 @@ app._mcp_server.read_resource()(handle_read_resource)
 app._mcp_server.list_prompts()(handle_list_prompts)
 app._mcp_server.get_prompt()(handle_get_prompt)
 
-# Setup OAuth endpoints after server initialization
-setup_oauth_endpoints()
+# Note: OAuth endpoints are now set up in the lifespan context manager
+# to ensure proper initialization before accepting requests
 
 def create_starlette_app(mcp_server: Server, *, debug: bool = False) -> Starlette:
     """Create a Starlette application that can serve the provided mcp server with SSE and OAuth endpoints."""
@@ -303,25 +331,21 @@ async def main():
     """Main entry point for the server."""
     # Configure logging
     logging.basicConfig(level=logging.INFO)
-    
-    # Initialize OAuth authentication
-    await initialize_oauth()
-    
-    # Initialize database connection
-    await initialize_database()
-    
-    # Setup OAuth endpoints after initialization
-    setup_oauth_endpoints()
-    
+
     mcp_transport = os.getenv("MCP_TRANSPORT", "stdio").lower()
     logger.info(f"MCP_TRANSPORT: {mcp_transport}")
 
     # Start the MCP server
     if mcp_transport == "sse":
+        # For SSE, initialize before starting the server (SSE handles its own startup)
+        await initialize_oauth()
+        await initialize_database()
+        setup_oauth_endpoints()
+
         app.settings.host = os.getenv("MCP_HOST")
         app.settings.port = int(os.getenv("MCP_PORT"))
         logger.info(f"Starting MCP server on {app.settings.host}:{app.settings.port}")
-        mcp_server = app._mcp_server  
+        mcp_server = app._mcp_server
         starlette_app = create_starlette_app(mcp_server, debug=True)
         config = uvicorn.Config(starlette_app, host=app.settings.host, port=app.settings.port, log_level="info")
         server = uvicorn.Server(config)
@@ -330,12 +354,29 @@ async def main():
         #await app.run_sse_async()
 
     elif mcp_transport == "streamable-http":
+        # For streamable-http, integrate lifespan to ensure initialization before requests
         app.settings.host = os.getenv("MCP_HOST")
         app.settings.port = int(os.getenv("MCP_PORT"))
         app.settings.streamable_http_path = os.getenv("MCP_PATH", "/mcp/")
         logger.info(f"Starting MCP server on {app.settings.host}:{app.settings.port} with path {app.settings.streamable_http_path}")
+
+        # Attach lifespan to the underlying FastAPI app
+        if hasattr(app, '_app'):
+            logger.info("Attaching lifespan context manager to FastAPI app")
+            app._app.router.lifespan_context = lifespan
+        else:
+            logger.warning("Could not attach lifespan - initializing manually")
+            await initialize_oauth()
+            await initialize_database()
+            setup_oauth_endpoints()
+
         await app.run_streamable_http_async()
     else:
+        # For stdio, initialize before starting (stdio is synchronous)
+        await initialize_oauth()
+        await initialize_database()
+        setup_oauth_endpoints()
+
         logger.info("Starting MCP server on stdin/stdout")
         await app.run_stdio_async()
 

@@ -4,8 +4,7 @@ services:
   mcp-teradata:
     build: .
     container_name: mcp-teradata-streamable-http
-    ports:
-      - "8001:8000"  # Using 8001 to avoid conflict with other services
+    network_mode: host
     environment:
       # Transport Configuration
       - MCP_TRANSPORT=streamable-http
@@ -38,6 +37,8 @@ services:
       # - OAUTH_VALIDATE_AUDIENCE=true
       # - OAUTH_VALIDATE_SCOPES=true
       # - OAUTH_REQUIRE_HTTPS=true
+    ports:
+      - "8091:8000"
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
