@@ -48,6 +48,37 @@ _connection_manager = None
 _db = ""
 _oauth_config = None
 _oauth_middleware = None
+_initialization_attempted = False
+_initialization_lock = None
+
+def _get_initialization_lock():
+    """Get or create the initialization lock."""
+    global _initialization_lock
+    if _initialization_lock is None:
+        _initialization_lock = asyncio.Lock()
+    return _initialization_lock
+
+async def lazy_initialize_database():
+    """
+    Attempt to initialize database connection lazily (on first tool call).
+    This is called if get_connection() finds no connection manager exists.
+    """
+    global _initialization_attempted
+
+    # Use lock to prevent multiple simultaneous initialization attempts
+    async with _get_initialization_lock():
+        # If already attempted or already initialized, skip
+        if _initialization_attempted or _connection_manager is not None:
+            return
+
+        logger.info("Lazy initialization: Attempting to initialize database connection...")
+        _initialization_attempted = True
+
+        try:
+            await initialize_database()
+        except Exception as e:
+            logger.error(f"Lazy initialization failed: {e}")
+            # Don't raise - let the tool call fail with appropriate error
 
 async def initialize_database():
     """Initialize database connection from environment or command line."""

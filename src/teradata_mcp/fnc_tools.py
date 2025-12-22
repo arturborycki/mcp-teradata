@@ -47,12 +47,21 @@ def format_error_response(error: str) -> ResponseType:
 
 
 async def get_connection():
-    """Get a healthy database connection."""
+    """Get a healthy database connection, initializing if necessary."""
     global _connection_manager
-    
+
     if not _connection_manager:
-        raise ConnectionError("Database connection not initialized")
-    
+        # Try to lazy-initialize the connection manager
+        from . import server
+        await server.lazy_initialize_database()
+
+        # Check again after lazy initialization
+        if not _connection_manager:
+            raise ConnectionError(
+                "Database connection not initialized. "
+                "Please set DATABASE_URI environment variable or provide database URL."
+            )
+
     return await _connection_manager.ensure_connection()
 
 
