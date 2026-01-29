@@ -6,8 +6,11 @@ Each function implements a specific database operation and returns properly form
 Includes OAuth 2.1 authorization support and connection retry logic.
 """
 
+import json
 import logging
 import yaml
+from datetime import date, datetime
+from decimal import Decimal
 from typing import Any, List
 from pydantic import AnyUrl
 
@@ -46,6 +49,19 @@ def format_error_response(error: str) -> ResponseType:
     return format_text_response(f"Error: {error}")
 
 
+def _serialize_value(val: Any) -> Any:
+    """Convert Teradata-specific types to JSON-serializable values."""
+    if val is None:
+        return None
+    if isinstance(val, Decimal):
+        return float(val)
+    if isinstance(val, (datetime, date)):
+        return str(val)
+    if isinstance(val, bytes):
+        return val.hex()
+    return val
+
+
 async def get_connection():
     """Get a healthy database connection, initializing if necessary."""
     global _connection_manager
@@ -69,20 +85,35 @@ async def get_connection():
 
 @with_connection_retry()
 async def execute_query(query: str) -> ResponseType:
-    """Execute a SQL query and return results as a table."""
+    """Execute a SQL query and return results as structured JSON for the MCP App UI."""
     logger.debug(f"Executing query: {query}")
 
     try:
-        # get_connection will raise ConnectionError if manager is not initialized
         tdconn = await get_connection()
         cur = tdconn.cursor()
         rows = cur.execute(query)
         if rows is None:
             return format_text_response("No results")
-        return format_text_response(list([row for row in rows.fetchall()]))
+
+        # Get column names from cursor description
+        columns = [desc[0] for desc in cur.description] if cur.description else []
+        raw_rows = rows.fetchall()
+
+        if not columns:
+            return format_text_response(list(raw_rows))
+
+        # Build structured data with column names and serialized values
+        data = []
+        for row in raw_rows:
+            row_dict = {}
+            for i, col in enumerate(columns):
+                row_dict[col] = _serialize_value(row[i])
+            data.append(row_dict)
+
+        result = {"data": data, "title": "Query Results"}
+        return [types.TextContent(type="text", text=json.dumps(result))]
     except ConnectionError as e:
         logger.error(f"Database connection error: {e}")
-        # Re-raise ConnectionError so retry logic can handle it
         raise
     except Exception as e:
         logger.error(f"Error executing query: {e}")
@@ -275,10 +306,10 @@ async def handle_list_tools() -> list[types.Tool]:
     """
     logger.info("Listing tools")
     return [
-        types.Tool(
-            name="query",
-            description="Executes a SQL query against the Teradata database",
-            inputSchema={
+        types.Tool.model_validate({
+            "name": "query",
+            "description": "Executes a SQL query against the Teradata database. Results are rendered as interactive ECharts bar charts.",
+            "inputSchema": {
                 "type": "object",
                 "properties": {
                     "query": {
@@ -288,7 +319,12 @@ async def handle_list_tools() -> list[types.Tool]:
                 },
                 "required": ["query"],
             },
-        ),
+            "_meta": {
+                "ui": {
+                    "resourceUri": "ui://query/mcp-app.html"
+                }
+            }
+        }),
         types.Tool(
             name="list_db",
             description="List all databases in the Teradata system",
