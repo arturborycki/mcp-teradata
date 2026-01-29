@@ -17,7 +17,9 @@ let isDark = false;
 // ---------------------------------------------------------------------------
 // DOM
 // ---------------------------------------------------------------------------
-const controlsEl = document.querySelector(".controls") as HTMLElement;
+const cardEl = document.querySelector(".card") as HTMLElement;
+const cardHeaderEl = document.querySelector(".card-header") as HTMLElement;
+const cardTitleEl = document.getElementById("card-title") as HTMLElement;
 const chartTypeSelect = document.getElementById(
   "chart-type",
 ) as HTMLSelectElement;
@@ -139,18 +141,22 @@ function showStatus(message: string, isError = false) {
     chartInstance.dispose();
     chartInstance = null;
   }
-  controlsEl.style.display = "none";
+  cardHeaderEl.style.display = "none";
 
   if (isError) {
     // Collapse the entire app to zero so the host iframe is effectively invisible
     chartEl.innerHTML = "";
     chartEl.style.height = "0";
+    cardEl.style.display = "none";
     document.body.style.overflow = "hidden";
     document.body.style.height = "0";
+    document.body.style.padding = "0";
   } else {
+    cardEl.style.display = "";
     chartEl.style.height = "";
     document.body.style.overflow = "";
     document.body.style.height = "";
+    document.body.style.padding = "";
     chartEl.innerHTML = `<div class="status-message">${escapeHtml(message)}</div>`;
   }
 }
@@ -227,15 +233,6 @@ const COLORS = [
 // ---------------------------------------------------------------------------
 function baseOption() {
   return {
-    title: {
-      text: currentTitle,
-      left: "center",
-      textStyle: {
-        fontSize: 15,
-        fontWeight: 600,
-        color: isDark ? "#e0e0e0" : "#333",
-      },
-    },
     tooltip: {
       trigger: "axis" as const,
       axisPointer: { type: "shadow" as const },
@@ -245,7 +242,7 @@ function baseOption() {
       textStyle: { color: isDark ? "#a0a0b0" : "#666", fontSize: 12 },
     },
     grid: {
-      top: 50,
+      top: 24,
       right: 24,
       bottom: 40,
       left: 16,
@@ -473,15 +470,6 @@ function polarBarOption() {
   const maxVal = Math.max(...values) * 1.2;
 
   return {
-    title: {
-      text: currentTitle,
-      left: "center",
-      textStyle: {
-        fontSize: 15,
-        fontWeight: 600,
-        color: isDark ? "#e0e0e0" : "#333",
-      },
-    },
     tooltip: {},
     color: COLORS,
     polar: { radius: [30, "70%"] },
@@ -656,15 +644,6 @@ function pieOption() {
   const values = getSeriesData(cols[0]);
 
   return {
-    title: {
-      text: currentTitle,
-      left: "center",
-      textStyle: {
-        fontSize: 15,
-        fontWeight: 600,
-        color: isDark ? "#e0e0e0" : "#333",
-      },
-    },
     tooltip: {
       trigger: "item",
       formatter: "{b}: {c} ({d}%)",
@@ -944,11 +923,14 @@ function renderChart() {
   const build = builders[chartType] || basicBarOption;
   const option = build();
 
-  // Restore visibility, show controls, clear any status message
+  // Restore visibility, show card + header, clear any status message
   document.body.style.overflow = "";
   document.body.style.height = "";
-  chartEl.style.height = "520px";
-  controlsEl.style.display = "";
+  document.body.style.padding = "";
+  cardEl.style.display = "";
+  cardHeaderEl.style.display = "";
+  cardTitleEl.textContent = currentTitle;
+  chartEl.style.height = "480px";
   const existing = chartEl.querySelector(".status-message");
   if (existing) existing.remove();
 
