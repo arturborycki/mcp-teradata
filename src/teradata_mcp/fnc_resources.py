@@ -7,10 +7,18 @@ Each function implements a specific database operation and returns properly form
 
 import logging
 import yaml
+from pathlib import Path
 from typing import Any, List
 from pydantic import AnyUrl
 
 import mcp.types as types
+from mcp.server.lowlevel.helper_types import ReadResourceContents
+
+# Path to the built MCP App HTML
+_MCP_APP_HTML = Path(__file__).parent.parent.parent / "mcp-app" / "dist" / "mcp-app.html"
+_MCP_APP_RESOURCE_URI = "ui://query/mcp-app.html"
+_VIZ_RESOURCE_URI = "ui://visualize_query/mcp-app.html"
+_MCP_APP_MIME_TYPE = "text/html;profile=mcp-app"
 
 logger = logging.getLogger(__name__)
 ResponseType = List[types.TextContent | types.ImageContent | types.EmbeddedResource]
@@ -154,36 +162,72 @@ async def prefetch_tables(db_name: str) -> dict:
 async def handle_list_resources() -> list[types.Resource]:
     """Handle listing of available resources."""
     global _db
+
+    resources = []
+
+    # Add the MCP App UI resources
+    if _MCP_APP_HTML.exists():
+        resources.append(
+            types.Resource(
+                uri=AnyUrl(_MCP_APP_RESOURCE_URI),
+                name="Query Visualizer",
+                description="Interactive ECharts visualization for visualize_query results",
+                mimeType=_MCP_APP_MIME_TYPE,
+            )
+        )
+        resources.append(
+            types.Resource(
+                uri=AnyUrl(_VIZ_RESOURCE_URI),
+                name="Query Visualizer",
+                description="Interactive ECharts visualization for visualize_query results",
+                mimeType=_MCP_APP_MIME_TYPE,
+            )
+        )
+
     tables_info = (await prefetch_tables(_db))
     # If prefetch_tables returned an error string, handle it gracefully
     if not isinstance(tables_info, dict):
-        # Return a single resource with the error message
-        return [
+        resources.append(
             types.Resource(
                 uri=AnyUrl("teradata://error"),
                 name="Error",
                 description=str(tables_info),
                 mimeType="text/plain",
             )
-        ]
-    table_resources = [
-        types.Resource(
-            uri=AnyUrl(f"teradata://table/{table_name}"),
-            name=f"{table_name} table",
-            description=f"{tables_info[table_name]['description']}" if tables_info[table_name]['description'] else f"Description of the {table_name} table",
-            mimeType="text/plain",
         )
-        for table_name in tables_info
-    ]
-    return table_resources
+        return resources
+
+    for table_name in tables_info:
+        resources.append(
+            types.Resource(
+                uri=AnyUrl(f"teradata://table/{table_name}"),
+                name=f"{table_name} table",
+                description=f"{tables_info[table_name]['description']}" if tables_info[table_name]['description'] else f"Description of the {table_name} table",
+                mimeType="text/plain",
+            )
+        )
+    return resources
 
 
-async def handle_read_resource(uri: AnyUrl) -> str:
+async def handle_read_resource(uri: AnyUrl):
     """Handle reading of a specific resource."""
     global _db
-    tables_info = (await prefetch_tables(_db)) 
-    if str(uri).startswith("teradata://table"):
-        table_name = str(uri).split("/")[-1]
+    uri_str = str(uri)
+
+    # Handle MCP App UI resources
+    if uri_str in (_MCP_APP_RESOURCE_URI, _VIZ_RESOURCE_URI):
+        if _MCP_APP_HTML.exists():
+            html_content = _MCP_APP_HTML.read_text(encoding="utf-8")
+            return [ReadResourceContents(
+                content=html_content,
+                mime_type=_MCP_APP_MIME_TYPE,
+            )]
+        else:
+            raise ValueError(f"MCP App HTML not found at: {_MCP_APP_HTML}")
+
+    if uri_str.startswith("teradata://table"):
+        tables_info = (await prefetch_tables(_db))
+        table_name = uri_str.split("/")[-1]
         if table_name in tables_info:
             return data_to_yaml(tables_info[table_name])
         else:

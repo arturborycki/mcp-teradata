@@ -6,8 +6,11 @@ Each function implements a specific database operation and returns properly form
 Includes OAuth 2.1 authorization support and connection retry logic.
 """
 
+import json
 import logging
 import yaml
+from datetime import date, datetime
+from decimal import Decimal
 from typing import Any, List
 from pydantic import AnyUrl
 
@@ -46,6 +49,19 @@ def format_error_response(error: str) -> ResponseType:
     return format_text_response(f"Error: {error}")
 
 
+def _serialize_value(val: Any) -> Any:
+    """Convert Teradata-specific types to JSON-serializable values."""
+    if val is None:
+        return None
+    if isinstance(val, Decimal):
+        return float(val)
+    if isinstance(val, (datetime, date)):
+        return str(val)
+    if isinstance(val, bytes):
+        return val.hex()
+    return val
+
+
 async def get_connection():
     """Get a healthy database connection, initializing if necessary."""
     global _connection_manager
@@ -68,24 +84,71 @@ async def get_connection():
 # --- Database Query Functions ---
 
 @with_connection_retry()
-async def execute_query(query: str) -> ResponseType:
-    """Execute a SQL query and return results as a table."""
-    logger.debug(f"Executing query: {query}")
+async def execute_query(sql: str) -> ResponseType:
+    """Execute a SQL query and return plain tabular results."""
+    logger.debug(f"Executing query: {sql}")
 
     try:
-        # get_connection will raise ConnectionError if manager is not initialized
         tdconn = await get_connection()
         cur = tdconn.cursor()
-        rows = cur.execute(query)
+        rows = cur.execute(sql)
         if rows is None:
             return format_text_response("No results")
-        return format_text_response(list([row for row in rows.fetchall()]))
+
+        columns = [desc[0] for desc in cur.description] if cur.description else []
+        raw_rows = rows.fetchall()
+
+        if not columns:
+            return format_text_response(list(raw_rows))
+
+        data = []
+        for row in raw_rows:
+            row_dict = {}
+            for i, col in enumerate(columns):
+                row_dict[col] = _serialize_value(row[i])
+            data.append(row_dict)
+
+        return format_text_response({"columns": columns, "rows": data, "row_count": len(data)})
     except ConnectionError as e:
         logger.error(f"Database connection error: {e}")
-        # Re-raise ConnectionError so retry logic can handle it
         raise
     except Exception as e:
         logger.error(f"Error executing query: {e}")
+        return format_error_response(str(e))
+
+
+@with_connection_retry()
+async def visualize_query(sql: str) -> ResponseType:
+    """Execute a SQL query and return results as structured JSON for ECharts visualization."""
+    logger.debug(f"Visualizing query: {sql}")
+
+    try:
+        tdconn = await get_connection()
+        cur = tdconn.cursor()
+        rows = cur.execute(sql)
+        if rows is None:
+            return format_text_response(json.dumps({"data": [], "title": "No Results"}))
+
+        columns = [desc[0] for desc in cur.description] if cur.description else []
+        raw_rows = rows.fetchall()
+
+        if not columns:
+            return format_text_response(json.dumps({"data": [], "title": "No Results"}))
+
+        data = []
+        for row in raw_rows:
+            row_dict = {}
+            for i, col in enumerate(columns):
+                row_dict[col] = _serialize_value(row[i])
+            data.append(row_dict)
+
+        result = {"data": data, "title": "Query Results"}
+        return [types.TextContent(type="text", text=json.dumps(result))]
+    except ConnectionError as e:
+        logger.error(f"Database connection error: {e}")
+        raise
+    except Exception as e:
+        logger.error(f"Error visualizing query: {e}")
         return format_error_response(str(e))
 
 
@@ -277,18 +340,37 @@ async def handle_list_tools() -> list[types.Tool]:
     return [
         types.Tool(
             name="query",
-            description="Executes a SQL query against the Teradata database",
+            description="Execute a SQL query against the Teradata database and return plain tabular results. Use this to inspect data, answer factual questions, or process results programmatically. If the user asks to visualize, chart, or graph results, use visualize_query instead.",
             inputSchema={
                 "type": "object",
                 "properties": {
                     "query": {
                         "type": "string",
-                        "description": "SQL query to execute that is a dialect of Teradata SQL",
+                        "description": "SQL query to execute in Teradata SQL dialect",
                     },
                 },
                 "required": ["query"],
             },
         ),
+        types.Tool.model_validate({
+            "name": "visualize_query",
+            "description": "Execute a SQL query against the Teradata database and display results as an interactive ECharts chart. PREFER THIS TOOL whenever the user asks to visualize, chart, plot, graph, or display data visually.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "SQL query to execute in Teradata SQL dialect",
+                    },
+                },
+                "required": ["query"],
+            },
+            "_meta": {
+                "ui": {
+                    "resourceUri": "ui://visualize_query/mcp-app.html"
+                }
+            }
+        }),
         types.Tool(
             name="list_db",
             description="List all databases in the Teradata system",
@@ -406,6 +488,11 @@ async def execute_tool_with_retry(name: str, arguments: dict | None) -> list[typ
         if arguments is None:
             return [types.TextContent(type="text", text="Error: No query provided")]
         tool_response = await execute_query(arguments["query"])
+        return tool_response
+    elif name == "visualize_query":
+        if arguments is None:
+            return [types.TextContent(type="text", text="Error: No query provided")]
+        tool_response = await visualize_query(arguments["query"])
         return tool_response
     elif name == "list_db":
         tool_response = await list_db()
