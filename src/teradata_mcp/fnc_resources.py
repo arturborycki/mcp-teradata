@@ -17,6 +17,7 @@ from mcp.server.lowlevel.helper_types import ReadResourceContents
 # Path to the built MCP App HTML
 _MCP_APP_HTML = Path(__file__).parent.parent.parent / "mcp-app" / "dist" / "mcp-app.html"
 _MCP_APP_RESOURCE_URI = "ui://query/mcp-app.html"
+_VIZ_RESOURCE_URI = "ui://visualize_query/mcp-app.html"
 _MCP_APP_MIME_TYPE = "text/html;profile=mcp-app"
 
 logger = logging.getLogger(__name__)
@@ -164,13 +165,21 @@ async def handle_list_resources() -> list[types.Resource]:
 
     resources = []
 
-    # Add the MCP App UI resource for query visualization
+    # Add the MCP App UI resources
     if _MCP_APP_HTML.exists():
         resources.append(
             types.Resource(
                 uri=AnyUrl(_MCP_APP_RESOURCE_URI),
                 name="Query Visualizer",
-                description="Interactive ECharts bar chart visualization for query results",
+                description="Interactive ECharts visualization for visualize_query results",
+                mimeType=_MCP_APP_MIME_TYPE,
+            )
+        )
+        resources.append(
+            types.Resource(
+                uri=AnyUrl(_VIZ_RESOURCE_URI),
+                name="Query Visualizer",
+                description="Interactive ECharts visualization for visualize_query results",
                 mimeType=_MCP_APP_MIME_TYPE,
             )
         )
@@ -205,8 +214,8 @@ async def handle_read_resource(uri: AnyUrl):
     global _db
     uri_str = str(uri)
 
-    # Handle MCP App UI resource
-    if uri_str == _MCP_APP_RESOURCE_URI:
+    # Handle MCP App UI resources
+    if uri_str in (_MCP_APP_RESOURCE_URI, _VIZ_RESOURCE_URI):
         if _MCP_APP_HTML.exists():
             html_content = _MCP_APP_HTML.read_text(encoding="utf-8")
             return [ReadResourceContents(

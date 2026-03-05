@@ -84,25 +84,57 @@ async def get_connection():
 # --- Database Query Functions ---
 
 @with_connection_retry()
-async def execute_query(query: str) -> ResponseType:
-    """Execute a SQL query and return results as structured JSON for the MCP App UI."""
-    logger.debug(f"Executing query: {query}")
+async def execute_query(sql: str) -> ResponseType:
+    """Execute a SQL query and return plain tabular results."""
+    logger.debug(f"Executing query: {sql}")
 
     try:
         tdconn = await get_connection()
         cur = tdconn.cursor()
-        rows = cur.execute(query)
+        rows = cur.execute(sql)
         if rows is None:
             return format_text_response("No results")
 
-        # Get column names from cursor description
         columns = [desc[0] for desc in cur.description] if cur.description else []
         raw_rows = rows.fetchall()
 
         if not columns:
             return format_text_response(list(raw_rows))
 
-        # Build structured data with column names and serialized values
+        data = []
+        for row in raw_rows:
+            row_dict = {}
+            for i, col in enumerate(columns):
+                row_dict[col] = _serialize_value(row[i])
+            data.append(row_dict)
+
+        return format_text_response({"columns": columns, "rows": data, "row_count": len(data)})
+    except ConnectionError as e:
+        logger.error(f"Database connection error: {e}")
+        raise
+    except Exception as e:
+        logger.error(f"Error executing query: {e}")
+        return format_error_response(str(e))
+
+
+@with_connection_retry()
+async def visualize_query(sql: str) -> ResponseType:
+    """Execute a SQL query and return results as structured JSON for ECharts visualization."""
+    logger.debug(f"Visualizing query: {sql}")
+
+    try:
+        tdconn = await get_connection()
+        cur = tdconn.cursor()
+        rows = cur.execute(sql)
+        if rows is None:
+            return format_text_response(json.dumps({"data": [], "title": "No Results"}))
+
+        columns = [desc[0] for desc in cur.description] if cur.description else []
+        raw_rows = rows.fetchall()
+
+        if not columns:
+            return format_text_response(json.dumps({"data": [], "title": "No Results"}))
+
         data = []
         for row in raw_rows:
             row_dict = {}
@@ -116,7 +148,7 @@ async def execute_query(query: str) -> ResponseType:
         logger.error(f"Database connection error: {e}")
         raise
     except Exception as e:
-        logger.error(f"Error executing query: {e}")
+        logger.error(f"Error visualizing query: {e}")
         return format_error_response(str(e))
 
 
@@ -306,22 +338,36 @@ async def handle_list_tools() -> list[types.Tool]:
     """
     logger.info("Listing tools")
     return [
+        types.Tool(
+            name="query",
+            description="Execute a SQL query against the Teradata database and return plain tabular results. Use this to inspect data, answer factual questions, or process results programmatically. If the user asks to visualize, chart, or graph results, use visualize_query instead.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "SQL query to execute in Teradata SQL dialect",
+                    },
+                },
+                "required": ["query"],
+            },
+        ),
         types.Tool.model_validate({
-            "name": "query",
-            "description": "Executes a SQL query against the Teradata database. Results are rendered as interactive ECharts bar charts.",
+            "name": "visualize_query",
+            "description": "Execute a SQL query against the Teradata database and display results as an interactive ECharts chart. PREFER THIS TOOL whenever the user asks to visualize, chart, plot, graph, or display data visually.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "query": {
                         "type": "string",
-                        "description": "SQL query to execute that is a dialect of Teradata SQL",
+                        "description": "SQL query to execute in Teradata SQL dialect",
                     },
                 },
                 "required": ["query"],
             },
             "_meta": {
                 "ui": {
-                    "resourceUri": "ui://query/mcp-app.html"
+                    "resourceUri": "ui://visualize_query/mcp-app.html"
                 }
             }
         }),
@@ -442,6 +488,11 @@ async def execute_tool_with_retry(name: str, arguments: dict | None) -> list[typ
         if arguments is None:
             return [types.TextContent(type="text", text="Error: No query provided")]
         tool_response = await execute_query(arguments["query"])
+        return tool_response
+    elif name == "visualize_query":
+        if arguments is None:
+            return [types.TextContent(type="text", text="Error: No query provided")]
+        tool_response = await visualize_query(arguments["query"])
         return tool_response
     elif name == "list_db":
         tool_response = await list_db()
