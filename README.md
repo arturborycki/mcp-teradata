@@ -24,7 +24,15 @@ The server offers comprehensive database and workload management tools:
    - **Required Scopes:** `teradata:query`, `teradata:read`
    - Input:
      - `query` (string): The SELECT SQL query to execute
-   - Returns: Query results as array of objects
+   - Returns: Plain tabular results (columns, rows, row count)
+
+- `visualize_query`
+   - Execute a SQL query and display results as an interactive ECharts chart via the built-in MCP App
+   - Preferred when the user asks to visualize, chart, plot, graph, or display data visually
+   - **Required Scopes:** `teradata:query`, `teradata:read`
+   - Input:
+     - `query` (string): SQL query to execute in Teradata SQL dialect
+   - Returns: Structured JSON rendered in an interactive MCP App with chart type selection and axis controls
 
 #### Schema Tools
 - `list_db`
@@ -60,6 +68,26 @@ The server offers comprehensive database and workload management tools:
 - `standard_deviation`
     -  What is the mean and standard deviation for column in table?
     - **Required Scopes:** `teradata:read`
+
+### MCP App — Interactive Query Visualization
+
+The `visualize_query` tool leverages the [MCP App](https://modelcontextprotocol.io/specification/2025-06-18/client/apps) concept to render query results as interactive ECharts charts directly within the MCP client. The visualization app is bundled as a single HTML file and served as an MCP resource.
+
+**Supported chart types:**
+
+| Category | Charts |
+|----------|--------|
+| Bar | Basic, Grouped, Stacked, Horizontal, Stacked Horizontal, Sorted, Waterfall, Rounded, Polar |
+| Line | Basic, Smooth, Area, Stacked Area, Step |
+| Pie | Pie, Doughnut, Rose / Nightingale |
+| Scatter | Scatter, Bubble |
+| Mixed | Bar + Line |
+
+**Interactive features:**
+- Chart type selector with 19 options
+- Dynamic X-axis column picker (auto-detects categorical vs. numeric columns)
+- Dark mode support via host context
+- Responsive chart resizing
 
 ## 🚀 Quick Start
 
