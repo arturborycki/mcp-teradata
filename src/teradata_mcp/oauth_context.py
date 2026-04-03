@@ -61,6 +61,7 @@ class OAuthContext:
         # This maps MCP tool names to operation types for scope checking
         tool_operation_map = {
             'query': 'query',
+            'visualize_query': 'query',
             'list_db': 'read',
             'list_tables': 'read',
             'show_tables_details': 'read',

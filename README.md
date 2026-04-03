@@ -1,411 +1,287 @@
-# Teradata MCP Server with OAuth 2.1 Authentication
+# Teradata MCP Server
 
-## Overview
-A Model Context Protocol (MCP) server implementation that provides secure database interaction and business intelligence capabilities through Teradata. This server enables running SQL queries, analyzing business data, and workload management with enterprise-grade OAuth 2.1 authentication.
+A Model Context Protocol (MCP) server for Teradata database with OAuth 2.1 authentication, multiple authentication mechanisms (TD2, LDAP, Kerberos), and interactive data visualization.
 
-## 🔐 Security Features
+## Features
 
-- **OAuth 2.1 Authentication** with Keycloak integration
-- **JWT Token Validation** using JWKS endpoints
-- **Scope-based Authorization** for fine-grained access control
+- **Multiple Auth Mechanisms** — TD2 (default), LDAP, Kerberos, JWT via Teradata `LOGMECH`
+- **OAuth 2.1** with Keycloak integration, JWT validation, scope-based authorization
 - **Protected Resource Metadata** (RFC 9728 compliant)
-- **Token Introspection** support for opaque tokens
-- **Production-ready** connection resilience and error handling
-- **Automatic Connection Retry** for improved reliability
+- **Interactive Visualization** — ECharts-based MCP App with 19 chart types
+- **Connection Resilience** — automatic retry with exponential backoff
+- **Non-blocking I/O** — all DB operations run via `asyncio.to_thread()`
+- **Per-tool QueryBand** — audit trail for Teradata workload management
 
-## Components
+## Tools
 
-### Tools
-The server offers comprehensive database and workload management tools:
+### Query Tools
+- **`query`** — Execute SQL queries, return plain tabular results
+- **`visualize_query`** — Execute SQL and render interactive ECharts charts via MCP App
 
-#### Query Tools
-- `query`
-   - Execute SELECT queries to read data from the database
-   - **Required Scopes:** `teradata:query`, `teradata:read`
-   - Input:
-     - `query` (string): The SELECT SQL query to execute
-   - Returns: Plain tabular results (columns, rows, row count)
+### Schema Tools
+- **`list_db`** — List all databases
+- **`list_tables`** — List tables/views in a database
+- **`show_tables_details`** — Show column names and types for a table
 
-- `visualize_query`
-   - Execute a SQL query and display results as an interactive ECharts chart via the built-in MCP App
-   - Preferred when the user asks to visualize, chart, plot, graph, or display data visually
-   - **Required Scopes:** `teradata:query`, `teradata:read`
-   - Input:
-     - `query` (string): SQL query to execute in Teradata SQL dialect
-   - Returns: Structured JSON rendered in an interactive MCP App with chart type selection and axis controls
+### Analysis Tools
+- **`list_missing_values`** — Columns with NULL value counts
+- **`list_negative_values`** — Columns with negative value counts
+- **`list_distinct_values`** — Distinct category counts per column
+- **`standard_deviation`** — Mean and standard deviation for a column
 
-#### Schema Tools
-- `list_db`
-   - Lists all databases in the Teradata system
-   - **Required Scopes:** `teradata:read`
-   - Returns: List of databases
+### MCP App — Interactive Visualization
 
-- `list_tables`
-   - Lists objects in a database
-   - **Required Scopes:** `teradata:read`
-   - Input:
-     - `db_name` (string): Database name
-   - Returns: List of database objects under provided or user default database
-
-- `show_tables_details`
-   - Show detailed information about a database tables
-   - **Required Scopes:** `teradata:read`
-   - Input:
-    - `table_name` (string): Name of the table
-    - `db_name` (string): Name of the database
-   - Returns: Array of column names and data types
-
-#### Analysis Tools
-- `list_missing_values`
-    - Lists the top features with missing values in a table
-    - **Required Scopes:** `teradata:read`
-- `list_negative_values`
-    - Lists how many features have negative values in a table
-    - **Required Scopes:** `teradata:read`
-- `list_distinct_values`
-    - Lists how many distinct categories are there for column in the table
-    - **Required Scopes:** `teradata:read`
-- `standard_deviation`
-    -  What is the mean and standard deviation for column in table?
-    - **Required Scopes:** `teradata:read`
-
-### MCP App — Interactive Query Visualization
-
-The `visualize_query` tool leverages the [MCP App](https://modelcontextprotocol.io/specification/2025-06-18/client/apps) concept to render query results as interactive ECharts charts directly within the MCP client. The visualization app is bundled as a single HTML file and served as an MCP resource.
-
-**Supported chart types:**
+The `visualize_query` tool renders results as interactive charts in the MCP client.
 
 | Category | Charts |
 |----------|--------|
-| Bar | Basic, Grouped, Stacked, Horizontal, Stacked Horizontal, Sorted, Waterfall, Rounded, Polar |
+| Bar | Basic, Grouped, Stacked, Horizontal, Sorted, Waterfall, Rounded, Polar |
 | Line | Basic, Smooth, Area, Stacked Area, Step |
 | Pie | Pie, Doughnut, Rose / Nightingale |
 | Scatter | Scatter, Bubble |
 | Mixed | Bar + Line |
 
-**Interactive features:**
-- Chart type selector with 19 options
-- Dynamic X-axis column picker (auto-detects categorical vs. numeric columns)
-- Dark mode support via host context
-- Responsive chart resizing
+## Quick Start
 
-## 🚀 Quick Start
-
-### 1. Basic Setup (No Authentication)
+### Installation
 
 ```bash
-# Clone the repository
 git clone https://github.com/arturborycki/mcp-teradata.git
 cd mcp-teradata
+uv sync
+```
 
-# Install dependencies
-uv install
+### Run with TD2 (Standard Authentication)
 
-# Run with database connection
+```bash
 uv run teradata-mcp "teradatasql://user:password@host/database"
 ```
 
-### 2. OAuth-Enabled Setup
+Or via environment variable:
 
 ```bash
-# Copy environment configuration
-cp .env.example .env
-
-# Edit .env with your OAuth settings
-OAUTH_ENABLED=true
-KEYCLOAK_URL=https://your-keycloak.com
-KEYCLOAK_REALM=teradata-realm
-KEYCLOAK_CLIENT_ID=teradata-mcp
-KEYCLOAK_CLIENT_SECRET=your-secret
-OAUTH_RESOURCE_SERVER_URL=https://your-mcp-server.com
-
-# Run with OAuth
-uv run teradata-mcp "teradatasql://user:password@host/database"
+export DATABASE_URI="teradatasql://user:password@host/database"
+uv run teradata-mcp
 ```
 
-### Configuration
+## Configuration
 
-### Database Connection
-```bash
-DATABASE_URI=teradatasql://username:password@hostname/database
-```
+### Claude Desktop
 
-### Connection Retry Settings
-```bash
-# Number of retry attempts for database connections (default: 1)
-TOOL_RETRY_MAX_ATTEMPTS=1
+Add to your `claude_desktop_config.json`:
 
-# Delay between retry attempts in seconds (default: 1.0)  
-TOOL_RETRY_DELAY_SECONDS=1.0
-```
+#### TD2 (Username/Password)
 
-### OAuth 2.1 Settings
-```bash
-# Enable OAuth authentication
-OAUTH_ENABLED=true
-
-# Keycloak configuration
-KEYCLOAK_URL=https://keycloak.example.com
-KEYCLOAK_REALM=teradata-realm  
-KEYCLOAK_CLIENT_ID=teradata-mcp
-KEYCLOAK_CLIENT_SECRET=your-client-secret
-
-# Resource server identification
-OAUTH_RESOURCE_SERVER_URL=https://your-mcp-server.com
-
-# Optional: Required scopes
-OAUTH_REQUIRED_SCOPES=teradata:read,teradata:query
-
-# Security settings
-OAUTH_VALIDATE_AUDIENCE=true
-OAUTH_VALIDATE_SCOPES=true
-OAUTH_REQUIRE_HTTPS=true
-```
-
-### Supported OAuth Scopes
-- `teradata:read` - Read access to database resources
-- `teradata:write` - Write access to database resources  
-- `teradata:query` - Execute SQL queries
-- `teradata:admin` - Administrative access (TDWM, user management)
-- `teradata:schema` - Schema management operations
-
-### Transport Compatibility
-
-OAuth 2.1 authentication is supported across all MCP transport methods:
-
-| Transport | OAuth Support | Discovery Endpoints | Notes |
-|-----------|---------------|-------------------|-------|
-| **SSE** | ✅ Full Support | ✅ Available | OAuth endpoints integrated into Starlette app |
-| **Streamable HTTP** | ✅ Full Support | ✅ Available | OAuth endpoints via FastMCP FastAPI integration |
-| **Stdio** | ➖ N/A | ➖ N/A | No HTTP endpoints, authentication via environment |
-
-**Discovery Endpoints Available:**
-- `/.well-known/oauth-protected-resource` - Protected resource metadata (RFC 9728)
-- `/.well-known/mcp-server-info` - MCP server capabilities and OAuth configuration
-- `/health` - Health check with OAuth status
-
-**Transport Selection:**
-```bash
-# SSE (Server-Sent Events) - Recommended for web applications
-export MCP_TRANSPORT=sse
-export MCP_HOST=0.0.0.0
-export MCP_PORT=8000
-
-# Streamable HTTP - Recommended for API integrations  
-export MCP_TRANSPORT=streamable-http
-export MCP_HOST=0.0.0.0
-export MCP_PORT=8000
-export MCP_PATH=/mcp/
-
-# Stdio - For command-line clients (Claude Desktop)
-export MCP_TRANSPORT=stdio
-```
-
-## 🐳 Docker Deployment
-
-### Without OAuth (Development)
-```bash
-docker-compose up -d
-```
-
-### With OAuth (Production)
-```bash
-# Edit environment variables in docker-compose.oauth.yml
-docker-compose -f docker-compose.oauth.yml up -d
-```
-
-### With Keycloak (Testing)
-```bash
-# Includes Keycloak server for testing
-docker-compose -f docker-compose.oauth.yml up keycloak mcp-teradata
-```
-
-## 🔑 Keycloak Setup
-
-### Automated Setup
-Use the provided script to automatically configure Keycloak:
-
-```bash
-# For local development
-./scripts/setup-keycloak.sh http://localhost:8080 admin admin
-
-# For remote Keycloak
-./scripts/setup-keycloak.sh https://your-keycloak.com admin-user admin-pass
-```
-
-### Manual Setup
-See the comprehensive guide in [`docs/OAUTH.md`](docs/OAUTH.md) for detailed Keycloak configuration instructions.
-
-## 🧪 Testing OAuth
-
-Test your OAuth configuration:
-
-```bash
-# Run OAuth tests
-./scripts/test-oauth.py
-
-# Test with custom settings
-./scripts/test-oauth.py --keycloak-url https://your-keycloak.com --realm your-realm
-```
-
-## 📋 API Endpoints
-
-When OAuth is enabled, the server exposes discovery endpoints:
-
-- `/.well-known/oauth-protected-resource` - Protected resource metadata (RFC 9728)
-- `/.well-known/mcp-server-info` - MCP server capabilities and OAuth info
-- `/health` - Health check with OAuth status
-
-## Usage with Claude Desktop
-
-### Basic Configuration
 ```json
 {
   "mcpServers": {
     "teradata": {
       "command": "uv",
       "args": [
-        "--directory",
-        "/Users/MCP/mcp-teradata",
-        "run",
-        "teradata-mcp"
+        "--directory", "/path/to/mcp-teradata",
+        "run", "teradata-mcp"
       ],
       "env": {
-        "DATABASE_URI": "teradatasql://user:passwd@host/database"
+        "DATABASE_URI": "teradatasql://user:password@host/database"
       }
     }
   }
 }
 ```
 
-### OAuth-Enabled Configuration
+#### LDAP Authentication
+
 ```json
 {
   "mcpServers": {
     "teradata": {
-      "command": "uv", 
+      "command": "uv",
       "args": [
-        "--directory",
-        "/Users/MCP/mcp-teradata",
-        "run",
-        "teradata-mcp"
+        "--directory", "/path/to/mcp-teradata",
+        "run", "teradata-mcp"
       ],
       "env": {
-        "DATABASE_URI": "teradatasql://user:passwd@host/database",
+        "DATABASE_URI": "teradatasql://@host/database",
+        "DB_LOGMECH": "LDAP",
+        "DB_LOGDATA": "authcid=ldap_user password=ldap_password"
+      }
+    }
+  }
+}
+```
+
+The `authcid` format depends on the LDAP directory:
+
+| Directory | Format |
+|-----------|--------|
+| Active Directory (Simple Bind) | `authcid=user@domain.com` |
+| Active Directory (DIGEST-MD5) | `authcid=DOMAIN\username` |
+| OpenLDAP / Sun DS | `authcid=username` |
+
+#### Kerberos Authentication
+
+```json
+{
+  "mcpServers": {
+    "teradata": {
+      "command": "uv",
+      "args": [
+        "--directory", "/path/to/mcp-teradata",
+        "run", "teradata-mcp"
+      ],
+      "env": {
+        "DATABASE_URI": "teradatasql://@host/database",
+        "DB_LOGMECH": "KRB5"
+      }
+    }
+  }
+}
+```
+
+#### OAuth-Enabled Configuration
+
+```json
+{
+  "mcpServers": {
+    "teradata": {
+      "command": "uv",
+      "args": [
+        "--directory", "/path/to/mcp-teradata",
+        "run", "teradata-mcp"
+      ],
+      "env": {
+        "DATABASE_URI": "teradatasql://user:password@host/database",
         "OAUTH_ENABLED": "true",
-        "KEYCLOAK_URL": "https://your-keycloak.com",
+        "KEYCLOAK_URL": "https://your-keycloak.example.com",
         "KEYCLOAK_REALM": "teradata-realm",
         "KEYCLOAK_CLIENT_ID": "teradata-mcp",
         "KEYCLOAK_CLIENT_SECRET": "your-secret",
-        "OAUTH_RESOURCE_SERVER_URL": "https://your-server.com"
+        "OAUTH_RESOURCE_SERVER_URL": "https://your-mcp-server.example.com"
       }
     }
   }
 }
 ```
+
+### Environment Variables
+
+#### Database Connection
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `DATABASE_URI` | Teradata connection URL (`teradatasql://user:pass@host/db`) | — |
+| `DB_LOGMECH` | Authentication mechanism: `TD2`, `LDAP`, `KRB5`, `TDNEGO`, `JWT` | `TD2` |
+| `DB_LOGDATA` | LDAP/JWT credentials (e.g., `authcid=user password=pass`) | — |
+| `DB_SSL_MODE` | TLS mode: `ALLOW`, `PREFER`, `REQUIRE`, `VERIFY-CA`, `VERIFY-FULL` | — |
+| `DB_ENCRYPT_DATA` | Enable transport encryption | `true` |
+
+#### Connection Resilience
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `DB_MAX_RETRIES` | Max reconnection attempts | `3` |
+| `DB_INITIAL_BACKOFF` | Initial backoff delay (seconds) | `1.0` |
+| `DB_MAX_BACKOFF` | Max backoff delay (seconds) | `30.0` |
+
+#### MCP Transport
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `MCP_TRANSPORT` | Transport: `stdio`, `sse`, `streamable-http` | `stdio` |
+| `MCP_HOST` | Bind address for HTTP transports | `localhost` |
+| `MCP_PORT` | Port for HTTP transports | `8000` |
+| `MCP_PATH` | Path for streamable-http | `/mcp/` |
+
+#### OAuth 2.1
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `OAUTH_ENABLED` | Enable OAuth authentication | `false` |
+| `KEYCLOAK_URL` | Keycloak server URL | — |
+| `KEYCLOAK_REALM` | Keycloak realm name | — |
+| `KEYCLOAK_CLIENT_ID` | OAuth client ID | — |
+| `KEYCLOAK_CLIENT_SECRET` | OAuth client secret | — |
+| `OAUTH_RESOURCE_SERVER_URL` | Resource server URL | — |
+| `OAUTH_REQUIRED_SCOPES` | Required scopes (comma-separated) | — |
+| `OAUTH_VALIDATE_AUDIENCE` | Validate token audience | `true` |
+| `OAUTH_VALIDATE_SCOPES` | Validate token scopes | `true` |
+| `OAUTH_REQUIRE_HTTPS` | Require HTTPS for OAuth URLs | `true` |
+| `CORS_ALLOWED_ORIGINS` | CORS allowed origins | `*` |
+
+### OAuth Scopes
+
+| Scope | Description |
+|-------|-------------|
+| `teradata:read` | Read access to database resources |
+| `teradata:write` | Write access to database resources |
+| `teradata:query` | Execute SQL queries |
+| `teradata:admin` | Administrative access |
+| `teradata:schema` | Schema management operations |
+
+### Transport Compatibility
+
+| Transport | OAuth | Discovery Endpoints | Use Case |
+|-----------|-------|-------------------|----------|
+| **stdio** | N/A | N/A | Claude Desktop, CLI clients |
+| **SSE** | Full | Available | Web applications |
+| **Streamable HTTP** | Full | Available | API integrations |
+
+Discovery endpoints (when OAuth enabled):
+- `/.well-known/oauth-protected-resource` — RFC 9728 metadata
+- `/.well-known/mcp-server-info` — MCP capabilities
+- `/health` — Health check
+
+## Docker Deployment
+
+### Development
 
 ```bash
-# Add the server to your claude_desktop_config.json
-{
-  "mcpServers": {
-    "teradata": {
-      "command": "uv",
-      "args": [
-        "--directory",
-        "/Users/MCP/mcp-teradata",
-        "run",
-        "teradata-mcp"
-      ],
-      "env": {
-        "DATABASE_URI": "teradata://user:passwd@host"
-      }
-    }
-  }
-}
-```
-## Usage as API container
-Make sure to edit docker-compose.yml and update environment variable
-```
-docker compose build
-docker compose up
+docker compose up -d
 ```
 
+### With OAuth
 
-## 🔧 Building
+```bash
+docker compose -f docker-compose.oauth.yml up -d
+```
+
+### Build
 
 ```bash
 uv build
 ```
 
-## 📚 Documentation
-
-- **[OAuth 2.1 Guide](docs/OAUTH.md)** - Comprehensive OAuth setup and usage
-- **[Keycloak Configuration](scripts/setup-keycloak.sh)** - Automated Keycloak setup
-- **[Environment Variables](.env.example)** - Configuration reference
-
-## 🔒 Security Best Practices
-
-1. **Use HTTPS** in production (`OAUTH_REQUIRE_HTTPS=true`)
-2. **Secure client secrets** using environment variables or secret management
-3. **Implement proper token refresh** for long-running applications
-4. **Follow principle of least privilege** when assigning scopes
-5. **Regularly audit** user permissions and access logs
-
-## 🐛 Troubleshooting
-
-### Common Issues
-
-**OAuth authentication fails:**
-```bash
-# Test Keycloak connectivity
-curl https://your-keycloak.com/auth/realms/master/.well-known/openid-configuration
-
-# Check server health
-curl https://your-mcp-server.com/health
-```
+## Troubleshooting
 
 **Database connection issues:**
 - Verify `DATABASE_URI` format: `teradatasql://user:pass@host/database`
 - Check network connectivity to Teradata server
-- Ensure database credentials are correct
-- Connection issues are automatically retried once by default
+- For LDAP: ensure `DB_LOGMECH=LDAP` and `DB_LOGDATA` are set correctly
+- Connection issues are automatically retried (configurable via `DB_MAX_RETRIES`)
 
-**Connection retry configuration:**
-- Set `TOOL_RETRY_MAX_ATTEMPTS` to control retry behavior (0 = no retries)
-- Set `TOOL_RETRY_DELAY_SECONDS` to control delay between retries
-- Monitor logs for retry attempt messages
+**LDAP authentication fails:**
+- Verify the Teradata server has LDAP configured in TDGSS
+- Check `authcid` format matches your directory type
+- Escape special characters in passwords (`@` → `\@`, spaces → use quotes)
 
 **Permission denied errors:**
 - Verify user has required OAuth scopes
 - Check Keycloak role assignments
-- Review scope mappings in client configuration
+- `visualize_query` requires `teradata:query` scope (not just `teradata:read`)
 
-### Debug Mode
-
-Enable debug logging:
+**Debug logging:**
 ```bash
 export LOG_LEVEL=DEBUG
-export OAUTH_ENABLED=true
-uv run teradata-mcp "teradatasql://user:pass@host/db"
+uv run teradata-mcp
 ```
 
-## 🤝 Contributing
+## License
 
-Contributions are welcome! Please:
+MIT License. See [LICENSE](LICENSE) for details.
 
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit changes (`git commit -m 'Add amazing feature'`)
-4. Push to branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
+## Acknowledgments
 
-## 📄 License
-
-This MCP server is licensed under the MIT License. This means you are free to use, modify, and distribute the software, subject to the terms and conditions of the MIT License. For more details, please see the LICENSE file in the project repository.
-
-## 🙏 Acknowledgments
-
-- [Model Context Protocol](https://modelcontextprotocol.io/) specification
-- [Keycloak](https://www.keycloak.org/) for OAuth 2.1 implementation
-- [Teradata](https://www.teradata.com/) for the database platform
-- [FastMCP](https://github.com/modelcontextprotocol/python-sdk) for the MCP server framework
+- [Model Context Protocol](https://modelcontextprotocol.io/)
+- [Keycloak](https://www.keycloak.org/)
+- [Teradata](https://www.teradata.com/)
+- [FastMCP](https://github.com/modelcontextprotocol/python-sdk)

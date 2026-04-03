@@ -15,6 +15,14 @@ class ProtectedResourceMetadata:
     
     def __init__(self, config: OAuthConfig):
         self.config = config
+
+    @staticmethod
+    def _get_version() -> str:
+        try:
+            from teradata_mcp import __version__
+            return __version__
+        except ImportError:
+            return "0.1.0"
     
     def get_metadata(self) -> Dict[str, Any]:
         """
@@ -98,7 +106,7 @@ class ProtectedResourceMetadata:
             # Additional Teradata MCP specific metadata
             "mcp_server": {
                 "name": "teradata-mcp",
-                "version": "1.0.0",
+                "version": self._get_version(),
                 "capabilities": [
                     "database_query",
                     "schema_management", 
@@ -173,6 +181,7 @@ class ProtectedResourceMetadata:
         tool_operation_mapping = {
             # Database query tools
             'mcp_teradata_query': 'query',
+            'mcp_teradata_visualize_query': 'query',
             'mcp_teradata_list_db': 'read',
             'mcp_teradata_list_objects': 'read',
             'mcp_teradata_show_tables': 'read',

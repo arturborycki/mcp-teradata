@@ -4,7 +4,6 @@ services:
   mcp-teradata:
     build: .
     container_name: mcp-teradata-streamable-http
-    network_mode: host
     environment:
       # Transport Configuration
       - MCP_TRANSPORT=streamable-http
@@ -13,7 +12,7 @@ services:
       - MCP_PATH=/mcp/
 
       # Database Configuration
-      - DATABASE_URI=teradatasql://vs:vs@192.168.1.236/vs
+      - DATABASE_URI=teradatasql://user:password@host/database
 
       # Connection Resilience Settings
       - DB_MAX_RETRIES=3

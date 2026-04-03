@@ -1,8 +1,7 @@
 """
-MCP Tool Functions for Teradata Database Operations
+MCP Resource Functions for Teradata Database Operations
 
-This module contains all the tool functions that are exposed through the MCP server.
-Each function implements a specific database operation and returns properly formatted responses.
+This module contains resource handlers exposed through the MCP server.
 """
 
 import logging
@@ -13,6 +12,7 @@ from pydantic import AnyUrl
 
 import mcp.types as types
 from mcp.server.lowlevel.helper_types import ReadResourceContents
+from .sql_constants import COLUMN_TYPE_CASE_SQL
 
 # Path to the built MCP App HTML
 _MCP_APP_HTML = Path(__file__).parent.parent.parent / "mcp-app" / "dist" / "mcp-app.html"
@@ -40,11 +40,9 @@ async def get_connection():
     global _connection_manager
 
     if not _connection_manager:
-        # Try to lazy-initialize the connection manager
         from . import server
         await server.lazy_initialize_database()
 
-        # Check again after lazy initialization
         if not _connection_manager:
             raise ConnectionError(
                 "Database connection not initialized. "
@@ -55,9 +53,7 @@ async def get_connection():
 
 async def read_resource_impl(uri: str) -> str:
     """Implementation of resource reading that can be used with FastMCP decorators."""
-    from mcp.server.lowlevel.helper_types import ReadResourceContents
     result = await handle_read_resource(uri)
-    # Extract content from ReadResourceContents
     if result and len(result) > 0:
         return result[0].content
     return ""
@@ -67,95 +63,50 @@ def data_to_yaml(data: Any) -> str:
     return yaml.dump(data, indent=2, sort_keys=False)
 
 async def prefetch_tables(db_name: str) -> dict:
-    """Prefetch table and column information."""
-    try:
-        logger.info("Prefetching table descriptions")
-        tdconn = await get_connection()
-        cur = tdconn.cursor()
-        rows = cur.execute("select TableName, CommentString, DatabaseName from dbc.TablesV tv where UPPER(tv.DatabaseName) = UPPER(?) and tv.TableKind in ('T','V','O');", [db_name])
-        table_results = rows.fetchall()
-        
-        cur_columns = tdconn.cursor()
-        cur_columns.execute(
-                    """
-                    sel TableName, ColumnName, CASE ColumnType
-                        WHEN '++' THEN 'TD_ANYTYPE'
-                        WHEN 'A1' THEN 'UDT'
-                        WHEN 'AT' THEN 'TIME'
-                        WHEN 'BF' THEN 'BYTE'
-                        WHEN 'BO' THEN 'BLOB'
-                        WHEN 'BV' THEN 'VARBYTE'
-                        WHEN 'CF' THEN 'CHAR'
-                        WHEN 'CO' THEN 'CLOB'
-                        WHEN 'CV' THEN 'VARCHAR'
-                        WHEN 'D' THEN  'DECIMAL'
-                        WHEN 'DA' THEN 'DATE'
-                        WHEN 'DH' THEN 'INTERVAL DAY TO HOUR'
-                        WHEN 'DM' THEN 'INTERVAL DAY TO MINUTE'
-                        WHEN 'DS' THEN 'INTERVAL DAY TO SECOND'
-                        WHEN 'DY' THEN 'INTERVAL DAY'
-                        WHEN 'F' THEN  'FLOAT'
-                        WHEN 'HM' THEN 'INTERVAL HOUR TO MINUTE'
-                        WHEN 'HR' THEN 'INTERVAL HOUR'
-                        WHEN 'HS' THEN 'INTERVAL HOUR TO SECOND'
-                        WHEN 'I1' THEN 'BYTEINT'
-                        WHEN 'I2' THEN 'SMALLINT'
-                        WHEN 'I8' THEN 'BIGINT'
-                        WHEN 'I' THEN  'INTEGER'
-                        WHEN 'MI' THEN 'INTERVAL MINUTE'
-                        WHEN 'MO' THEN 'INTERVAL MONTH'
-                        WHEN 'MS' THEN 'INTERVAL MINUTE TO SECOND'
-                        WHEN 'N' THEN 'NUMBER'
-                        WHEN 'PD' THEN 'PERIOD(DATE)'
-                        WHEN 'PM' THEN 'PERIOD(TIMESTAMP WITH TIME ZONE)'
-                        WHEN 'PS' THEN 'PERIOD(TIMESTAMP)'
-                        WHEN 'PT' THEN 'PERIOD(TIME)'
-                        WHEN 'PZ' THEN 'PERIOD(TIME WITH TIME ZONE)'
-                        WHEN 'SC' THEN 'INTERVAL SECOND'
-                        WHEN 'SZ' THEN 'TIMESTAMP WITH TIME ZONE'
-                        WHEN 'TS' THEN 'TIMESTAMP'
-                        WHEN 'TZ' THEN 'TIME WITH TIME ZONE'
-                        WHEN 'UT' THEN 'UDT'
-                        WHEN 'YM' THEN 'INTERVAL YEAR TO MONTH'
-                        WHEN 'YR' THEN 'INTERVAL YEAR'
-                        WHEN 'AN' THEN 'UDT'
-                        WHEN 'XM' THEN 'XML'
-                        WHEN 'JN' THEN 'JSON'
-                        WHEN 'DT' THEN 'DATASET'
-                        WHEN '??' THEN 'STGEOMETRY''ANY_TYPE'
-                        END as CType, CommentString
-                    from DBC.ColumnsVX where upper(DatabaseName) = upper(?)
-                    """
-                                , [db_name])
-        column_results = cur_columns.fetchall()
-        tables_schema = {}
-        for table_row in table_results:
-            table_name = table_row[0]
-            table_description = table_row[1]
-            database_name = table_row[2]
-            tables_schema[table_name] = {
-            "description": table_description,
-            "database": database_name,
-            "columns": {}
-            }
-        for column_row in column_results:
-            table_name = column_row[0]
-            column_name = column_row[1]
-            column_type = column_row[2]
-            column_description = column_row[3]
-            if table_name in tables_schema:
-                tables_schema[table_name]["columns"][column_name] = {
-                "type": column_type,
-                "description": column_description
-                }
-        return tables_schema
+    """Prefetch table and column information.
 
-    except ConnectionError as e:
-        logger.error(f"Database connection error: {e}")
-        return f"Database connection error: {e}"
-    except Exception as e:
-        logger.error(f"Error prefetching table descriptions: {e}")
-        return f"Error prefetching table descriptions: {e}"
+    Returns:
+        dict: Table schema information.
+
+    Raises:
+        ConnectionError: If database connection fails.
+        RuntimeError: If prefetch operation fails.
+    """
+    logger.info("Prefetching table descriptions")
+    tdconn = await get_connection()
+    cur = tdconn.cursor()
+    rows = cur.execute("select TableName, CommentString, DatabaseName from dbc.TablesV tv where UPPER(tv.DatabaseName) = UPPER(?) and tv.TableKind in ('T','V','O');", [db_name])
+    table_results = rows.fetchall()
+
+    cur_columns = tdconn.cursor()
+    cur_columns.execute(
+                f"""
+                sel TableName, ColumnName, {COLUMN_TYPE_CASE_SQL} as CType, CommentString
+                from DBC.ColumnsVX where upper(DatabaseName) = upper(?)
+                """
+                            , [db_name])
+    column_results = cur_columns.fetchall()
+    tables_schema = {}
+    for table_row in table_results:
+        table_name = table_row[0]
+        table_description = table_row[1]
+        database_name = table_row[2]
+        tables_schema[table_name] = {
+        "description": table_description,
+        "database": database_name,
+        "columns": {}
+        }
+    for column_row in column_results:
+        table_name = column_row[0]
+        column_name = column_row[1]
+        column_type = column_row[2]
+        column_description = column_row[3]
+        if table_name in tables_schema:
+            tables_schema[table_name]["columns"][column_name] = {
+            "type": column_type,
+            "description": column_description
+            }
+    return tables_schema
 
 # --- Resource Handler Functions ---
 
@@ -184,14 +135,15 @@ async def handle_list_resources() -> list[types.Resource]:
             )
         )
 
-    tables_info = (await prefetch_tables(_db))
-    # If prefetch_tables returned an error string, handle it gracefully
-    if not isinstance(tables_info, dict):
+    try:
+        tables_info = await prefetch_tables(_db)
+    except Exception as e:
+        logger.warning(f"Could not prefetch tables: {e}")
         resources.append(
             types.Resource(
                 uri=AnyUrl("teradata://error"),
                 name="Error",
-                description=str(tables_info),
+                description=f"Could not load table resources: check database connection",
                 mimeType="text/plain",
             )
         )
@@ -226,10 +178,13 @@ async def handle_read_resource(uri: AnyUrl):
             raise ValueError(f"MCP App HTML not found at: {_MCP_APP_HTML}")
 
     if uri_str.startswith("teradata://table"):
-        tables_info = (await prefetch_tables(_db))
+        tables_info = await prefetch_tables(_db)
         table_name = uri_str.split("/")[-1]
         if table_name in tables_info:
-            return data_to_yaml(tables_info[table_name])
+            return [ReadResourceContents(
+                content=data_to_yaml(tables_info[table_name]),
+                mime_type="text/plain",
+            )]
         else:
             raise ValueError(f"Unknown table: {table_name}")
     else:

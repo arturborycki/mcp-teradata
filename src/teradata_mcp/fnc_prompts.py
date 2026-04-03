@@ -106,7 +106,7 @@ async def handle_get_prompt(name: str, arguments: dict[str, str] | None) -> type
         # Get info_type with a fallback default
         database = arguments.get("database", "database name")
         table = arguments.get("table", "table name")
-        prompt_text = PROMPTS["Analyze_database"].format(table=table, database=database)
+        prompt_text = PROMPTS["Analyze_table"].format(table=table, database=database)
         return types.GetPromptResult(
             description=f"Extracting details on {table} from database {database}",
             messages=[
